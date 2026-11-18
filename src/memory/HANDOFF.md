@@ -56,9 +56,10 @@ outage does not spam the log. `NullAnswerCache` never hits and never stores
 (`get` → `None`, `version`/`bump_version` → 0, `clear` → 0); it is what tests and
 a deliberately cache-less orchestrator use.
 
-`get_answer_cache(settings=None)` resolves once per process: `answer_cache_enabled
-= false` → `None` (info log), no `REDIS_URL` → `None` (warning), otherwise a
-`RedisAnswerCache`. `build_answer_cache()` raises `ValueError` without a URL.
+`get_answer_cache(settings=None)` resolves once per process:
+`answer_cache_enabled=False` → `None` (info log), no `REDIS_URL` → `None`
+(warning), otherwise a `RedisAnswerCache`. `build_answer_cache()` raises
+`ValueError` without a URL.
 
 `invalidate_answer_cache(settings=None) -> int | None` returns `None` when no
 cache is configured. Both a failed bump **and** a cache that cannot even be
@@ -266,9 +267,10 @@ read/write-only failure behaves the same.
   (§1). `.env.example` repeats the same stale sentence. The code is right; the
   comments were not updated.
 - **Not verified:** live Redis of any version (the module targets `redis>=5.0`),
-  concurrent `/ask` requests sharing one cache, eviction under `maxmemory`
-  policy, and cache behaviour across a Redis restart (the version counter is not
-  persisted by this code — it lives in Redis, so a `FLUSHALL` resets it to 0).
+  concurrent `/ask` requests sharing one cache, eviction under a `maxmemory`
+  policy, and behaviour across a Redis restart. The version counter is an ordinary
+  key: if it disappears, `version()` falls back to 0, which makes older entries
+  unreachable (they still expire on their TTL) rather than serving them.
 
 ---
 
@@ -288,8 +290,10 @@ Success: no issues found in 2 source files
 ```
 
 Repo-wide at the same moment, `REDIS_URL` unset:
-`.venv/bin/python -m pytest -q` → **486 passed, 64 skipped** (the 64 include the
-5 live cache tests and the database-backed suites).
+`.venv/bin/python -m pytest -q` → **490 passed, 64 skipped** (the 64 include the
+5 live cache tests and the database-backed suites). The count moved while this was
+being written — another agent was adding the four invalidation tests described
+above — so re-run rather than trusting the number.
 
 The `StarletteDeprecationWarning` from `fastapi.testclient` is the one warning
 everywhere in this repo (pre-existing).

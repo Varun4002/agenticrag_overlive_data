@@ -79,7 +79,7 @@ and each chunk gains `redacted_types` — all frozen fields, none added here.
    `chunks_with_redactions`, `placeholders`, `detected_spans`,
    `allowlisted_spans`, `declined_person_spans`, `declined_location_spans`,
    `unknown_entities`, `person_registry_size`, `entities_enabled`,
-   `audit_persisted`, plus `latency_ms`.
+   `audit_persisted`; the event itself carries `latency_ms`.
 
 ### Failure modes
 
@@ -137,9 +137,10 @@ scrubber redacts PII only) · an empty pack passes through.
 
 - The `audit.redactions` write path. `tests/pii/conftest.py` defines
   `pii_session_factory`/`clean_pii_db` and seeds a document + chunk for FK-valid
-  rows, but no test consumes those fixtures — every test runs through
-  `NullRedactionWriter`. The brief's "audit rows written with salted hash;
-  original value not recoverable" test does not exist.
+  rows, but no test consumes those fixtures. With no `DATABASE_URL` in this
+  environment every test goes through `NullRedactionWriter`, so the insert path is
+  never exercised. The brief's "audit rows written with salted hash; original
+  value not recoverable" test does not exist.
 - Fail-closed behaviour. Nothing asserts `PiiUnavailableError`/`PiiScrubError`
   from `scrub()`; the orchestrator suite covers the *downstream* mapping
   (`guardrail_blocked`, `tests/orchestrator/test_state_machine.py`).
@@ -149,7 +150,7 @@ scrubber redacts PII only) · an empty pack passes through.
 
 ## 4. Deviations from the brief
 
-1. **No `ScrubRequest` model; `scrub(pack, **kwargs)` instead** (1). The brief's
+1. **No `ScrubRequest` model; `scrub(pack, **kwargs)` instead.** The brief's
    `ScrubRequest.evidence` + `registry_persons` map directly onto the first
    argument and `known_person_names`; the extra keyword-only collaborators exist
    so tests and the dashboard can inject a trace id, a session factory and
@@ -170,8 +171,10 @@ scrubber redacts PII only) · an empty pack passes through.
    `EmailRecognizer` validates with `tldextract`, which does not know the
    RFC 2606 `.example` TLD — *every* corpus email was dropped. The replacement
    is a structural regex with no TLD lookup (which also keeps the scrubber
-   offline). Same for `DATE_TIME`: Presidio redacts every deadline, which the
-   policy forbids, so only explicit birth phrases are matched.
+   offline). `DATE_TIME` is not in the enabled entity set at all: the module
+   docstring records that Presidio's date recognizer redacts every deadline,
+   which the policy forbids, so only explicit birth phrases are matched by
+   `DateOfBirthRecognizer`.
 5. **Registry augmentation is wired but unused in the live pipeline.** The
    orchestrator calls `scrub(pack, trace_id=…, session_factory=…)` with no
    `known_person_names` (`src/orchestrator/run.py`), per ruling #4: the entity
@@ -233,7 +236,7 @@ scrubber redacts PII only) · an empty pack passes through.
 
 ```
 $ .venv/bin/python -m pytest tests/pii -q
-17 passed, 1 warning in 4.56s
+17 passed, 1 warning in 4.96s
     # the model was available: the `engines` fixture did not skip.
 
 $ .venv/bin/ruff check src/pii tests/pii

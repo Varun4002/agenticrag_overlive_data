@@ -1,7 +1,7 @@
 # Synthesis — Hand-off (component 06)
 
-Status: **implemented**, tests pass on this machine (verified 2026-11-18). Third
-of the three Wave-2 components that shipped without a hand-off; written after
+Status: **implemented**, tests pass on this machine (verified 2026-11-18). The
+component shipped in Wave 2 without a hand-off; this document was written after
 the fact from the code and tests, including the two bug fixes found on a live
 run (rulings #8–#9).
 
@@ -132,9 +132,9 @@ These are the two live bugs as regression tests: `"... because Nimbus slipped.
    `src/memory/HANDOFF.md`): nothing produces session turns to pass.
 3. **The `Citation` shape is the frozen one**, `{chunk_id, document_id, source,
    title, quote, url}` — not the brief's `{source, source_id, title, url,
-   updated_at}`. `quote` (first 200 characters of the chunk) was added upstream
-   for the eval's groundedness check; `source_id`/`updated_at` are not in the
-   contract, so the API response cannot expose them.
+   updated_at}`. `quote` (first 200 characters of the chunk) is what
+   `evals.scoring` feeds the groundedness judge; `source_id`/`updated_at` are not
+   in the contract, so the API response cannot expose them.
 4. **Marker-merge and marker-only refusal** (ruling #8). A model that writes
    `"... because Nimbus slipped. [1]"` otherwise loses the real sentence and can
    ship an answer that is only `"[1]"`.
@@ -214,8 +214,9 @@ everywhere in this repo (pre-existing): the repo-root `tests/conftest.py`
 imports `TestClient` for every run, so it shows up even in suites that never use
 it.
 
-Repo-wide context at the same moment: `pytest -q` → 486 passed, 64 skipped
-(`REDIS_URL` unset). The live quality numbers are in
+Repo-wide context at the same moment: `pytest -q` → 490 passed, 64 skipped
+(`REDIS_URL` unset; the suite was still moving while this was written — a
+concurrent agent was adding answer-cache tests). The live quality numbers are in
 `src/evals/HANDOFF.md` and `docs/08-decisions.md` (ruling #13): eval run 2 scored
 groundedness 0.20 with `pii_leaks=0` and `refusal_correct=0.90`.
 

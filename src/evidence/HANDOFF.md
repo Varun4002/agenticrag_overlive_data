@@ -21,8 +21,7 @@ cross-cutting "structured-output steps use a non-reasoning model"),
 | `src/evidence/validator.py` | `validate_claims()`, `ValidationOutcome`, `Contradiction`, `is_injection()`, `lexical_support()`, `tokenise()`, `DEFAULT_MIN_OVERLAP`. |
 | `src/evidence/sufficiency.py` | `question_aspects()`, `score_sufficiency()`, `Aspect`, `SufficiencyResult`, `DEFAULT_THRESHOLD`. |
 | `src/evidence/prompts.py` | `SYSTEM_PROMPT`, `build_system_prompt()`, `build_user_prompt()`, `build_messages()`, `MAX_OUTPUT_TOKENS`, `MAX_CHUNK_CHARS`. |
-| `tests/evidence/` | 36 tests (35 offline — one is skipped without `LIVE_LLM`). |
-| `tests/synthesis/` and `tests/orchestrator/` | Not this component's, but they rely on the same frozen `Claim`/`VerifiedClaims` shapes. |
+| `tests/evidence/` | 36 test items: 35 offline (all pass) + 1 opt-in live call (skipped without `LIVE_LLM`). |
 
 ### Contract (as implemented)
 
@@ -102,7 +101,7 @@ verify()
 | Model returns valid JSON with `{"claims": []}` | **accepted as success** — no repair, zero claims, refusal |
 | Instruction-shaped claim | dropped, audited; other claims unaffected |
 | Contradictory values | both kept, contradiction reported in the trace; the synthesizer must present both |
-| LLM error/timeout | propagates (`LLMError` / `TimeoutError`); the orchestrator maps it to a typed refusal |
+| LLM error | propagates as `LLMError`; the orchestrator applies the wall-clock budget and maps both to a typed refusal |
 
 ---
 

@@ -55,7 +55,9 @@ docs are frozen so agents can build in parallel.
 - **Cache:** Redis (`redis>=5.0`, optional via `REDIS_URL`) for the answer cache;
   Postgres stays the source of truth and the cache is never required (ruling #14)
 - **Connectors:** `httpx` against the Jira/Notion REST APIs, plus Gmail over IMAP
-  with an app password (no OAuth client — ruling #12); **no** LangChain/LlamaIndex for the MVP; the orchestrator is a deterministic state machine with LLM planning steps (rationale in `02-architecture.md`)
+  with an app password (no OAuth client — ruling #12); **no**
+  LangChain/LlamaIndex for the MVP; the orchestrator is a deterministic state
+  machine with LLM planning steps (rationale in `02-architecture.md`)
 - **Operator dashboard:** single-file static HTML at `/ui`, backed by `/admin/*`
   (dev/ops tool, gated by `ADMIN_ENABLED` — `docs/09-operator-dashboard.md`)
 - **PII:** Microsoft Presidio (analyzer + anonymizer)

@@ -20,7 +20,7 @@ http://127.0.0.1:8000/admin/*   # the JSON API it calls
 | **Overview** | Documents (current/superseded), chunks and how many are embedded, traces and events, PII redactions, memory tables; per-source counts; `core.sync_state`; runtime config (models, endpoint, thresholds); ACL users found in `documents.acl`; the last 12 audit events. Polls every 15 s. |
 | **Documents** | Filter by source, search title/id/content, include superseded rows. Click a row to read the document text and every chunk (seq, chars, embedding presence, heading path, section, hash). |
 | **Traces** | Recent traces with agent/latency roll-up; click one for the ordered event timeline with payloads. Any trace id can be opened directly. |
-| **Actions** | Seed the fixture corpus, run a Jira sync, run a bounded embedding backfill. Results are shown as JSON, with a link into the trace when one was produced. |
+| **Actions** | Seed the fixture corpus, run a connector sync (Jira, or Gmail when `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` are set; Notion answers 501), run a bounded embedding backfill. A completed sync — Jira or Gmail — and any backfill that writes chunks bump the answer-cache version, so repeated questions re-run the pipeline instead of serving stale answers. Results are shown as JSON, with a link into the trace when one was produced. |
 
 ## API
 
@@ -34,6 +34,7 @@ http://127.0.0.1:8000/admin/*   # the JSON API it calls
 | `POST` | `/admin/search` | `{query, user_id, top_k, sources, scrub, known_person_names}` |
 | `POST` | `/admin/sync` | `{source, full}` — same code path as `scripts/sync_jira.py` |
 | `POST` | `/admin/backfill` | `{limit, only_missing, force, source, embedder}` — `embedder="fake"` for offline |
+| `POST` | `/admin/cache/invalidate` | Drops every cached answer and bumps the data version. With `REDIS_URL`: `{invalidated: true, cleared, version}`; without it: `{invalidated: false, reason: "no answer cache configured (REDIS_URL is unset)"}`. A Redis failure is a 502. Needs no database; there is no button for it — call the route. |
 | `POST` | `/admin/seed` | `{confirm: true}` — upserts `fixtures/corpus` (idempotent, refused in prod) |
 
 Error semantics are deliberate: **400** = fix your configuration (e.g. Jira
@@ -63,9 +64,12 @@ backfill 240 s) and the caller should re-run later — both jobs are idempotent.
 `/ask` now runs the full pipeline (retrieve → scrub → verify → synthesize) and
 the **Ask** tab shows the real answer with its citations and trace. Still
 missing, and visible as such in every trace: guardrails (M3 — the plan event
-lists `guard_input`/`guard_output` as skipped), memory and the answer cache
-(M4), and the Notion/Gmail connectors. The Ask tab's evidence list below the
-answer shows exactly what the model was given, scrubbed.
+lists `guard_input`/`guard_output` as skipped), session turns and the entity
+registry (M4 — the Redis answer cache is implemented and optional via
+`REDIS_URL`, ruling #14), and the Notion connector. Gmail is implemented over
+IMAP with an app password (ruling #12); it needs `GMAIL_ADDRESS` and
+`GMAIL_APP_PASSWORD` before the sync route will run it. The Ask tab's evidence
+list below the answer shows exactly what the model was given, scrubbed.
 
 ## Run it
 
@@ -84,7 +88,7 @@ database; every data endpoint answers 503 with that reason.
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/api -q     # 35 tests, no database needed
+.venv/bin/python -m pytest tests/api -q     # 38 tests (2026-11-18), no database needed
 .venv/bin/ruff check && .venv/bin/mypy src
 ```
 

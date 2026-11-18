@@ -1,5 +1,16 @@
 # 07 — Memory Design
 
+> **Status note (2026-11-18).** Only Tier 2 exists, and it is **Redis**, not the
+> `mem.answer_cache` Postgres table (the table stays in the schema, unused).
+> Keys are `sha256(normalized question | user_id | data version)`, the TTL is
+> 900 s, and a version counter is bumped on every sync/backfill/seed write —
+> ruling #14 in `docs/08-decisions.md`, code in `src/memory/answer_cache.py`,
+> state of the component in `src/memory/HANDOFF.md`. The per-source watermark and
+> `content_hash` freshness rule described below is **not implemented**: staleness
+> is the version counter plus the TTL. Session scratchpad (Tier 1) and entity
+> registry (Tier 3) are unbuilt, as are the cache stampede lock and the
+> correction path.
+
 Memory exists for one purpose: **re-access without re-paying full cost** —
 latency (caching), token cost (skipping re-planning), and consistency (same
 entity named the same way across turns and systems).
