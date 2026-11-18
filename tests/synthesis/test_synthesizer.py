@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from synth_helpers import FakeClient, chunk, claim, pack, verified
 
 from config import Settings
@@ -9,11 +10,15 @@ from db.tracing import InMemoryEventSink
 from orchestrator.pipeline import SynthesisResult
 from synthesis.prompts import MAX_OUTPUT_TOKENS
 from synthesis.synthesizer import (
+    META_CITATION_PHRASES,
+    QUOTE_CHARS,
     _best_supporting_chunk,
     _dedupe_lines,
     _is_decorative_line,
     _is_negated,
     _line_key,
+    _quote_for,
+    _strip_meta_citation,
     synthesize,
 )
 
@@ -273,6 +278,119 @@ def test_best_supporting_chunk_keeps_first_candidate_without_overlap() -> None:
     chosen = _best_supporting_chunk(claim("wholly different words", "c1", "c2"), by_id)
     assert chosen is not None
     assert chosen.chunk_id == "c1"
+
+
+# ---------------------------------------------------------------------------
+# Citation quote: the window that supports the claim, not a blind prefix
+# ---------------------------------------------------------------------------
+
+SUPPORT = "The Nimbus cutover moved to 2026-12-04 after Finance signed the renewal."
+FILLER = "The weekly status sync covered unrelated scheduling noise."
+
+
+def _long_chunk_text() -> str:
+    """A chunk whose support sits well past the first ``QUOTE_CHARS`` characters."""
+    text = " ".join([FILLER] * 15) + " " + SUPPORT + " " + " ".join([FILLER] * 5)
+    assert len(text) >= 1200
+    assert text.index(SUPPORT) > QUOTE_CHARS
+    return text
+
+
+async def test_quote_contains_the_supporting_sentence_from_deep_in_the_chunk() -> None:
+    """Live defect: the delivered quote was the head, so it did not support the claim."""
+    text = _long_chunk_text()
+    pack_ = pack(chunk("c1", text))
+    verified_ = verified(claim("The Nimbus cutover moved to 2026-12-04", "c1"))
+    client = FakeClient("The Nimbus cutover moved to 2026-12-04 [1].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    quote = result.citations[0].quote
+    assert "2026-12-04" in quote
+    assert "Finance signed the renewal" in quote
+    assert len(quote) <= QUOTE_CHARS
+    assert "2026-12-04" not in text[:QUOTE_CHARS]  # the old prefix could not have had it
+
+
+async def test_quote_falls_back_to_the_chunk_head_when_nothing_overlaps() -> None:
+    text = " ".join([FILLER] * 10)
+    pack_ = pack(chunk("c1", text))
+    verified_ = verified(claim("PHX-150 cutover is 2026-11-20", "c1"))
+    client = FakeClient("PHX-150 cutover is 2026-11-20 [1].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert result.citations[0].quote == text[:QUOTE_CHARS]
+
+
+def test_quote_for_trims_at_a_word_boundary() -> None:
+    """A chunk with no sentence break must not ship half a word."""
+    text = " ".join(["unbroken"] * 60)  # 539 chars, no full stop
+    quote = _quote_for(text, "unbroken")
+
+    assert 0 < len(quote) <= QUOTE_CHARS
+    assert not quote.endswith("unbroke")
+    assert quote.split() == ["unbroken"] * len(quote.split())
+    # The split really is on whitespace and the tail is untouched.
+    assert text.startswith(quote)
+
+
+# ---------------------------------------------------------------------------
+# Meta narration about the marker ("as indicated in claim [1]")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("phrase", META_CITATION_PHRASES)
+def test_meta_citation_phrase_is_stripped_and_the_marker_kept(phrase: str) -> None:
+    line = f"PHX-142 waits on Okta admin access, {phrase} [1]."
+
+    assert _strip_meta_citation(line) == "PHX-142 waits on Okta admin access [1]."
+
+
+def test_meta_citation_phrase_with_an_article_is_stripped() -> None:
+    line = "PHX-142 waits on Okta admin access as indicated in the claim [1]."
+
+    assert _strip_meta_citation(line) == "PHX-142 waits on Okta admin access [1]."
+
+
+def test_parenthetical_claim_is_stripped_to_its_marker() -> None:
+    assert _strip_meta_citation("PHX-142 is blocked (claim [1]).") == "PHX-142 is blocked [1]."
+    assert _strip_meta_citation("PHX-142 is blocked (claim).") == "PHX-142 is blocked."
+
+
+def test_text_without_meta_narration_is_returned_unchanged() -> None:
+    """The tidy-up must not rewrite ordinary prose (commas, double spaces)."""
+    line = "PHX-142 is blocked,  pending  review [1]."
+
+    assert _strip_meta_citation(line) == line
+
+
+async def test_live_meta_narration_is_stripped_from_the_answer() -> None:
+    """Live answer: `"...access issues, as indicated in claim [1]."`."""
+    body = "PHX-142 is waiting on the resolution of Okta admin access issues"
+    pack_ = pack(chunk("c1", f"{body}."))
+    verified_ = verified(claim(f"{body}.", "c1"))
+    client = FakeClient(f"{body}, as indicated in claim [1].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert result.answer == f"{body} [1]."
+
+
+async def test_answer_that_is_only_meta_narration_and_a_marker_refuses() -> None:
+    text = "PHX-142 is waiting on the resolution of Okta admin access issues."
+    pack_ = pack(chunk("c1", text))
+    verified_ = verified(claim(text, "c1"))
+    client = FakeClient("As indicated in claim [1].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "[" not in result.answer
+
 
 
 # ---------------------------------------------------------------------------

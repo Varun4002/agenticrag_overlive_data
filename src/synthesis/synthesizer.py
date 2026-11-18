@@ -47,6 +47,38 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _LABEL_RE = re.compile(r"\b(?:citations?|references?)\b:?", re.IGNORECASE)
 
+#: Narration the model wraps around its own markers ("as indicated in claim [1]").
+#: The system prompt forbids it and the deployed model writes it anyway, so the
+#: cleaner strips the phrase and keeps the marker it pointed at. A list of plain
+#: phrases, not one opaque regex: each shape is readable and testable on its own.
+META_CITATION_PHRASES: tuple[str, ...] = (
+    "as indicated in claim",
+    "as stated in claim",
+    "as mentioned in claim",
+    "as shown in claim",
+    "as noted in claim",
+    "as described in claim",
+    "as per claim",
+    "according to claim",
+)
+
+
+def _meta_pattern(phrase: str) -> str:
+    """Regex for one listed phrase: any spacing, optional ``the`` before ``claim``."""
+    head, _, tail = phrase.rpartition(" ")
+    pattern = r"\s+".join(re.escape(part) for part in head.split())
+    if tail == "claim":
+        return rf"{pattern}\s+(?:the\s+)?claims?"
+    return rf"{pattern}\s+{re.escape(tail)}"
+
+
+_META_CITATION_RE = re.compile(
+    "|".join(_meta_pattern(phrase) for phrase in META_CITATION_PHRASES), re.IGNORECASE
+)
+
+#: ``(claim [1])`` — the same narration as a parenthetical. The marker survives.
+_CLAIM_PAREN_RE = re.compile(r"\(\s*(?:the\s+)?claims?\s*(?:\[(\d+)\])?\s*\)", re.IGNORECASE)
+
 #: Characters of the source chunk kept as the citation quote.
 QUOTE_CHARS = 200
 
@@ -144,6 +176,28 @@ def _merge_marker_only(sentences: list[str]) -> list[str]:
     return merged
 
 
+def _strip_meta_citation(line: str) -> str:
+    """Remove the model's narration about a marker; keep the marker.
+
+    ``"... admin access issues, as indicated in claim [1]."`` ships as
+    ``"... admin access issues [1]."``: the phrase is scaffolding the prompt
+    already bans, and it reads as if the answer were quoting an assertion rather
+    than citing a source. Text with no such phrase is returned untouched, so the
+    punctuation tidy-up cannot rewrite ordinary prose.
+    """
+    stripped = _META_CITATION_RE.sub(" ", line)
+    stripped = _CLAIM_PAREN_RE.sub(
+        lambda match: f"[{match.group(1)}]" if match.group(1) else "", stripped
+    )
+    if stripped == line:
+        return line
+    # The phrase took its own comma/space with it: tidy what is left dangling.
+    stripped = re.sub(r"\s*,\s*(?=\[)", " ", stripped)
+    stripped = re.sub(r"\s*,\s*(?=[.;:]|$)", "", stripped)
+    stripped = re.sub(r"\s+([.,;:])", r"\1", stripped)
+    return " ".join(stripped.split())
+
+
 def _is_decorative_line(line: str) -> bool:
     """True when a line is nothing but markers and a ``Citations:``-style label.
 
@@ -195,7 +249,7 @@ def _clean_answer(
     dropped: list[str] = []
 
     for raw_line in raw.splitlines():
-        line = _strip_invalid_markers(raw_line.strip(), len(claims))
+        line = _strip_meta_citation(_strip_invalid_markers(raw_line.strip(), len(claims)))
         if not line:
             continue
         if _is_decorative_line(line):
@@ -334,6 +388,74 @@ def _implied_marker(sentence: str, claims: Sequence[Claim]) -> int | None:
     return best_marker
 
 
+def _fixed_windows(text: str) -> list[str]:
+    """Split text into ``QUOTE_CHARS``-wide windows cut at word boundaries."""
+    windows: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + QUOTE_CHARS, len(text))
+        if end < len(text):
+            # Never ship half a word: back off to the last space inside the window.
+            space = text.rfind(" ", start + 1, end)
+            if space > start:
+                end = space
+        window = text[start:end].strip()
+        if window:
+            windows.append(window)
+        start = end
+    return windows
+
+
+def _quote_units(text: str) -> list[str]:
+    """Units the quote window slides over: sentences, else fixed character windows.
+
+    A sentence is what a reader (and the lexical judge) treats as support, so a
+    window starting on the sentence that states the claim's values can be quoted
+    whole. An unusually long sentence, or a chunk with no sentence break at all,
+    falls back to fixed windows so every unit fits in ``QUOTE_CHARS``.
+    """
+    sentences = [part.strip() for part in _SENTENCE_RE.split(text) if part.strip()]
+    if len(sentences) <= 1:
+        return _fixed_windows(text)
+    units: list[str] = []
+    for sentence in sentences:
+        if len(sentence) <= QUOTE_CHARS:
+            units.append(sentence)
+        else:
+            units.extend(_fixed_windows(sentence))
+    return units
+
+
+def _quote_for(chunk_text: str, claim_text: str) -> str:
+    """Quote for a citation: the window of the chunk that best supports the claim.
+
+    A blind prefix fails when the claim's support sits deeper than
+    ``QUOTE_CHARS``: the delivered quote then omits it, which misleads the reader
+    and makes a lexical grounding judge score the claim zero (the live eval did
+    exactly that). Windows are scored by how many of the claim's words they
+    contain; ties keep the earliest window (strict ``>``), and a chunk sharing
+    nothing with the claim keeps the old prefix behaviour.
+    """
+    units = _quote_units(chunk_text)
+    claim_tokens = _token_set(claim_text)
+    best = ""
+    best_score = 0
+    for start in range(len(units)):
+        window = ""
+        for unit in units[start:]:
+            candidate = f"{window} {unit}" if window else unit
+            if len(candidate) > QUOTE_CHARS:
+                break
+            window = candidate
+            score = len(claim_tokens & _token_set(window))
+            if score > best_score:
+                best = window
+                best_score = score
+    if not best:
+        return chunk_text[:QUOTE_CHARS]
+    return best
+
+
 def _citations_for(
     used: Sequence[int], markers: dict[int, Claim], by_id: dict[str, ScrubbedChunk]
 ) -> tuple[list[Citation], dict[int, int]]:
@@ -363,7 +485,7 @@ def _citations_for(
                     document_id=chunk.document_id,
                     source=chunk.source,
                     title=chunk.title,
-                    quote=chunk.text[:QUOTE_CHARS],
+                    quote=_quote_for(chunk.text, claim.text),
                     url=chunk.url,
                 )
             )

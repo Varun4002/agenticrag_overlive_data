@@ -43,6 +43,7 @@ JudgeFn = Callable[[str, str], bool | None]
 
 _CITATION_MARKER = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\[])")
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
 _LIST_PREFIX = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+")
 _HEADING_PREFIX = re.compile(r"^\s*#{1,6}\s*")
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'_-]*")
@@ -108,17 +109,48 @@ def _parse_markers(text: str, citation_count: int) -> tuple[tuple[int, ...], tup
     return tuple(dict.fromkeys(resolved)), tuple(dict.fromkeys(dangling))
 
 
-def _sentence_candidates(answer: str) -> list[str]:
-    """Split an answer into candidate claim sentences, preserving bullets."""
-    candidates: list[str] = []
-    for line in answer.splitlines():
-        stripped = _LIST_PREFIX.sub("", _HEADING_PREFIX.sub("", line)).strip()
+def _merge_marker_fragments(sentences: Sequence[str]) -> list[str]:
+    """Attach a citation-only fragment to the sentence before it.
+
+    Models write ``"... not the schedule. [1]"``: ``_SENTENCE_BREAK`` splits
+    before the ``[``, so the marker becomes a "sentence" of its own and the
+    sentence it actually supports looks uncited — a live answer scored
+    structural 0.00 for exactly that shape. A fragment with no alphanumeric
+    content carries no claim, so it belongs to the sentence before it (the
+    synthesizer fixes the same shape at the source, ``_merge_marker_only``).
+
+    The scope of "before it" is the caller's: ``_sentence_candidates`` passes one
+    paragraph at a time, so a marker is never attributed across a blank line.
+    """
+    merged: list[str] = []
+    for sentence in sentences:
+        stripped = sentence.strip()
         if not stripped:
             continue
-        for part in _SENTENCE_BREAK.split(stripped):
-            part = part.strip()
-            if part:
-                candidates.append(part)
+        bare = _CITATION_MARKER.sub(" ", stripped)
+        if merged and not any(char.isalnum() for char in bare):
+            merged[-1] = f"{merged[-1]} {stripped}"
+        else:
+            merged.append(stripped)
+    return merged
+
+
+def _sentence_candidates(answer: str) -> list[str]:
+    """Split an answer into candidate claim sentences, preserving bullets.
+
+    Sentences are gathered per paragraph, because a marker-only fragment belongs
+    to the sentence just before it within that paragraph — never across a blank
+    line, where it is not evidence for the paragraph above.
+    """
+    candidates: list[str] = []
+    for paragraph in _PARAGRAPH_BREAK.split(answer):
+        sentences: list[str] = []
+        for line in paragraph.splitlines():
+            stripped = _LIST_PREFIX.sub("", _HEADING_PREFIX.sub("", line)).strip()
+            if not stripped:
+                continue
+            sentences.extend(_SENTENCE_BREAK.split(stripped))
+        candidates.extend(_merge_marker_fragments(sentences))
     return candidates
 
 

@@ -83,6 +83,19 @@ with the labelled lexical proxy rather than an entailment judge (ruling #13 in
 `docs/08-decisions.md`). The eval must run as a corpus ACL identity
 (`--user-id …`); the default identity sees nothing.
 
+**Live Gmail is verified end to end.** The IMAP connector synced 200 real inbox
+messages (8.8 s), the indexer wrote 650 chunks (442 k tokens, 20.7 s), and
+`/ask` answered a question about that mail in 28 s with three grounded
+citations and PII placeholders (`[EMAIL_1]`, …) instead of raw addresses. ACL
+isolation holds: the fixture identity sees zero real-mail chunks. That run
+exposed four defects the fixture corpus could not (extraction context overflow,
+synthesis truncation, missing citation markers, and a wrong-chunk citation
+bug); each is fixed with a regression test, and the lessons are rulings
+#15–#21. Note the local profile: an 8B model on a 6 GB GPU runs at
+11 % CPU / 89 % GPU with a 4096-token context, which is why extraction is
+capped at six chunks (`EVIDENCE_EXTRACTION_MAX_CHUNKS`) and the local budget is
+raised via `ORCHESTRATOR_BUDGET_S=300`.
+
 Remaining: guardrails (M3), the planner's live fetch plus session/entity memory
 (M4), and the Notion connector (M5). Gmail is implemented over IMAP with an app
 password (ruling #12) and the answer cache is Redis behind an optional

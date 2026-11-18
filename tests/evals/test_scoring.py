@@ -196,6 +196,66 @@ def test_empty_answer_scores_zero() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Trailing markers: the live eval-run-3 shapes
+# --------------------------------------------------------------------------- #
+# The model writes the marker after the full stop ("... not the schedule. [1]").
+# The splitter turned that marker into a claim of its own, so the sentence it
+# supports looked uncited and two live answers scored structural 0.00.
+
+
+def test_marker_after_the_full_stop_grounds_the_sentence_it_follows() -> None:
+    report = groundedness(
+        "The OKR page holds the goals, not the schedule. [1]",
+        [citation("The OKR page holds the goals, not the schedule.")],
+        judge=lexical_judge,
+    )
+
+    assert report.claims_total == 1  # one claim, not the sentence plus a marker claim
+    assert report.claims_cited == 1
+    assert report.structural_score == 1.0
+    assert report.score == 1.0
+    assert report.flags == ()
+
+
+def test_marker_after_the_full_stop_grounds_a_paraphrased_claim() -> None:
+    answer = "The renewal is verbally accepted by Finance but not in writing. [1]"
+    quote = "The renewal is verbally accepted by Finance, but nothing is signed yet."
+
+    report = groundedness(answer, [citation(quote)], judge=lexical_judge)
+
+    assert report.claims_total == 1
+    assert report.structural_score == 1.0
+    assert report.score == 1.0
+
+
+def test_marker_fragment_does_not_cross_a_paragraph_break() -> None:
+    """A lone `[1]` in the next paragraph is not evidence for the one above."""
+    report = groundedness(
+        "The migration is overdue.\n\n[1]",
+        [citation("The migration is overdue.")],
+        judge=lexical_judge,
+    )
+
+    assert report.claims_total == 1
+    assert report.claims_cited == 0
+    assert report.structural_score == 0.0
+    assert "The migration is overdue" in report.uncited_claims[0]
+
+
+def test_dangling_marker_fragment_does_not_ground_the_sentence() -> None:
+    report = groundedness(
+        "The migration is overdue. [2]",
+        [citation("The migration is overdue.")],
+        judge=lexical_judge,
+    )
+
+    assert report.claims_total == 1
+    assert report.structural_score == 0.0
+    assert report.dangling_markers == (2,)
+    assert "dangling_citations" in report.flags
+
+
+# --------------------------------------------------------------------------- #
 # Judge unavailable must never silently become 1.0
 # --------------------------------------------------------------------------- #
 
