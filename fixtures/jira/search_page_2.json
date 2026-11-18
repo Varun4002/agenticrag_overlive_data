@@ -1,0 +1,73 @@
+{
+  "expand": "schema,names",
+  "startAt": 2,
+  "maxResults": 2,
+  "total": 3,
+  "issues": [
+    {
+      "expand": "operations,versionedRepresentations,editmeta,changelog,renderedFields",
+      "id": "10103",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10103",
+      "key": "PHX-103",
+      "fields": {
+        "summary": "Grace Hopper is on leave — cover the on-call rota",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Grace Hopper (grace@example.com, +49 30 555 0142) is on leave until 2026-11-30. Cover her on-call slots. Escalate to her manager, Barbara Liskov, at bliskov@example.com if the pager keeps firing." }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Handover notes live in " },
+                {
+                  "type": "text",
+                  "text": "the runbook",
+                  "marks": [
+                    { "type": "link", "attrs": { "href": "https://acme.atlassian.net/wiki/spaces/OPS/pages/77" } }
+                  ]
+                },
+                { "type": "text", "text": "." }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "To Do",
+          "category": { "key": "new", "name": "To Do" }
+        },
+        "assignee": {
+          "accountId": "5f1d7c0a9e4b8c0012ab55ef",
+          "displayName": "Radia Perlman",
+          "emailAddress": "radia@example.com",
+          "active": true
+        },
+        "reporter": {
+          "accountId": "5f1d7c0a9e4b8c0012ab00aa",
+          "displayName": "Grace Hopper",
+          "emailAddress": "grace@example.com",
+          "active": true
+        },
+        "creator": {
+          "accountId": "5f1d7c0a9e4b8c0012ab00aa",
+          "displayName": "Grace Hopper",
+          "emailAddress": "grace@example.com",
+          "active": true
+        },
+        "duedate": "2026-11-18",
+        "priority": { "name": "Highest", "id": "1" },
+        "labels": ["ops", "oncall"],
+        "issuetype": { "name": "Task", "subtask": false },
+        "project": { "key": "PHX", "name": "Phoenix", "id": "10010" },
+        "resolution": null,
+        "created": "2026-11-10T07:30:00.000+0000",
+        "updated": "2026-11-16T14:22:00.000+0000"
+      }
+    }
+  ]
+}

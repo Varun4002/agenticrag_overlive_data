@@ -1,0 +1,161 @@
+{
+  "description": "Project Atlas (ATL) issues and issue comments — deliberately unrelated to Phoenix.",
+  "documents": [
+    {
+      "source": "jira",
+      "source_id": "ATL-88",
+      "parent_source_id": null,
+      "doc_type": "issue",
+      "title": "ATL-88 — Decommission the legacy warehouse ETL",
+      "content": "Key: ATL-88\nSummary: Decommission the legacy warehouse ETL\nType: Epic\nStatus: In Progress\nPriority: Medium\nProject: Project Atlas (ATL)\nAssignee: Grace Adeyemi\nReporter: Grace Adeyemi\nDue date: 2026-11-12\nCreated: 2026-09-14\nUpdated: 2026-11-16\nLabels: etl, warehouse, decommission\nComponents: Data Platform / Pipeline\n\nDescription\n\nAtlas is retiring the hand-rolled nightly ETL that feeds the finance mart and replacing it with dbt models on the new warehouse. This issue tracks the decommission itself: freeze new jobs, migrate the remaining 14 models, then switch off the scheduler.\n\nCurrent state: 11 of 14 models migrated. The three remaining are the currency conversion model, the revenue recognition model, and the nightly refund rollup. None of them are Phoenix work; they read from the finance mart, not from any billing ledger.\n\nDue date 2026-11-12 has passed. The remaining models are blocked on a data-quality review of the currency conversion table, which is scheduled for 2026-11-19.",
+      "url": "https://northwind.atlassian.example/browse/ATL-88",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-09-14T09:30:00+00:00",
+      "updated_at": "2026-11-16T14:05:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    },
+    {
+      "source": "jira",
+      "source_id": "ATL-91",
+      "parent_source_id": null,
+      "doc_type": "issue",
+      "title": "ATL-91 — Warehouse schema review for the finance mart",
+      "content": "Key: ATL-91\nSummary: Warehouse schema review for the finance mart\nType: Task\nStatus: In Review\nPriority: Medium\nProject: Project Atlas (ATL)\nAssignee: Grace Adeyemi\nReporter: Grace Adeyemi\nDue date: 2026-11-19\nCreated: 2026-11-02\nUpdated: 2026-11-16\nLabels: schema, finance-mart\nComponents: Data Platform / Modeling\n\nDescription\n\nReview the proposed star schema for the finance mart before the ETL cutover: fact tables for invoices and payments, dimensions for account, product, and period. The review looks for grain mistakes, missing keys, and anything that would force a rewrite after cutover.\n\nThe draft has one clear problem: the invoice fact table is at invoice-line grain but the dashboard queries assume invoice grain, so every total currently double-counts lines. Grace has a rewrite in review that flips it to invoice grain with a bridge table for line detail.\n\nTarget: approval on 2026-11-19 so the models can be migrated before the ETL scheduler is switched off.",
+      "url": "https://northwind.atlassian.example/browse/ATL-91",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-11-02T08:10:00+00:00",
+      "updated_at": "2026-11-16T13:44:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    },
+    {
+      "source": "jira",
+      "source_id": "ATL-95",
+      "parent_source_id": null,
+      "doc_type": "issue",
+      "title": "ATL-95 — Snowflake credit usage review",
+      "content": "Key: ATL-95\nSummary: Snowflake credit usage review\nType: Task\nStatus: To Do\nPriority: Low\nProject: Project Atlas (ATL)\nAssignee: Grace Adeyemi\nReporter: Grace Adeyemi\nCreated: 2026-11-07\nUpdated: 2026-11-07\nLabels: cost, warehouse\nComponents: Data Platform / Cost\n\nDescription\n\nWarehouse spend is up 40% quarter over quarter, mostly from the new dbt models running full refreshes instead of incremental ones. Review credit usage per model and convert the three most expensive full refreshes to incremental.\n\nNo due date: this is opportunistic work to pick up after the ETL decommission, not before.",
+      "url": "https://northwind.atlassian.example/browse/ATL-95",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-11-07T11:25:00+00:00",
+      "updated_at": "2026-11-07T11:25:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    },
+    {
+      "source": "jira",
+      "source_id": "ATL-99",
+      "parent_source_id": null,
+      "doc_type": "issue",
+      "title": "ATL-99 — Publish the data catalog v0",
+      "content": "Key: ATL-99\nSummary: Publish the data catalog v0\nType: Task\nStatus: To Do\nPriority: Medium\nProject: Project Atlas (ATL)\nAssignee: Grace Adeyemi\nReporter: Grace Adeyemi\nDue date: 2026-12-08\nCreated: 2026-11-12\nUpdated: 2026-11-12\nLabels: catalog, documentation\nComponents: Data Platform / Documentation\n\nDescription\n\nPublish a first-pass data catalog so analysts stop asking which table is authoritative. Scope: every table in the finance mart and the orders area, with owner, grain, refresh cadence, and upstream dependencies.\n\nv0 is documentation only. Column-level lineage and the search UI are explicitly out of scope until someone actually asks for them.",
+      "url": "https://northwind.atlassian.example/browse/ATL-99",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-11-12T15:00:00+00:00",
+      "updated_at": "2026-11-12T15:00:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    },
+    {
+      "source": "jira",
+      "source_id": "ATL-77",
+      "parent_source_id": null,
+      "doc_type": "issue",
+      "title": "ATL-77 — Fix nightly ETL skew on the orders table",
+      "content": "Key: ATL-77\nSummary: Fix nightly ETL skew on the orders table\nType: Bug\nStatus: Done\nPriority: High\nProject: Project Atlas (ATL)\nAssignee: Grace Adeyemi\nReporter: Grace Adeyemi\nDue date: 2026-10-30\nCreated: 2026-10-21\nUpdated: 2026-10-30\nLabels: etl, performance\nComponents: Data Platform / Pipeline\n\nDescription\n\nThe nightly ETL spent 70% of its runtime in three skewed partitions of the orders table, because one merchant accounts for 30% of all order rows. Repartitioned on order_id instead of merchant_id and the job dropped from 96 minutes to 22 minutes.\n\nFixed on 2026-10-30. The same skew pattern exists in the refunds table and is tracked as follow-up work in the ETL decommission epic.",
+      "url": "https://northwind.atlassian.example/browse/ATL-77",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-10-21T10:00:00+00:00",
+      "updated_at": "2026-10-30T18:30:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    },
+    {
+      "source": "jira",
+      "source_id": "ATL-88#c2210",
+      "parent_source_id": "ATL-88",
+      "doc_type": "issue_comment",
+      "title": "Three models left, all blocked on the data-quality review",
+      "content": "Status as of today: 11 of 14 models migrated. Currency conversion, revenue recognition, and the refund rollup are left, and all three wait on the currency conversion data-quality review on 2026-11-19.\n\nThe original 2026-11-12 due date is missed. New estimate for the decommission is 2026-11-26 assuming the review passes first time.\n\nAnyone from the billing side reading this: Atlas does not touch the Phoenix ledgers. The refund rollup reads the finance mart, which is fed by Finance's own extracts, so there is no cutover risk either way. Grace can be reached at grace.adeyemi@northwind.example.",
+      "url": "https://northwind.atlassian.example/browse/ATL-88#c2210?focusedCommentId=ATL-88#c2210",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-11-16T14:02:00+00:00",
+      "updated_at": "2026-11-16T14:02:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    }
+  ]
+}

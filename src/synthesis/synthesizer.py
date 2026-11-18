@@ -1,0 +1,323 @@
+"""Answer synthesis: verified claims in, cited answer out.
+
+Invariants:
+- Nothing but ``VerifiedClaims`` may be restated. Uncited factual sentences are
+  stripped, not repaired.
+- Citation markers are renumbered so every ``[n]`` in the delivered answer maps
+  to exactly one entry in the delivered citations.
+- Refusal is deterministic (no LLM call) whenever the evidence layer says the
+  question cannot be answered.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+from config import Settings, get_settings
+from db.tracing import EventSink, NullEventSink, Tracer
+from llm.base import CompletionRequest, LLMClient
+from llm.openai_compatible import OpenAICompatibleClient
+from orchestrator.contracts import Citation
+from orchestrator.pipeline import (
+    Claim,
+    ScrubbedChunk,
+    ScrubbedPack,
+    SynthesisResult,
+    VerifiedClaims,
+)
+from synthesis.prompts import MAX_OUTPUT_TOKENS, build_messages
+
+__all__ = ["refusal_answer", "synthesize"]
+
+logger = logging.getLogger(__name__)
+
+AGENT = "synthesis"
+
+_CITATION_RE = re.compile(r"\[(\d+)\]")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_LABEL_RE = re.compile(r"\b(?:citations?|references?)\b:?", re.IGNORECASE)
+
+#: Characters of the source chunk kept as the citation quote.
+QUOTE_CHARS = 200
+
+#: Sentences shorter than this are treated as headings/fragments, not claims.
+MIN_FACTUAL_WORDS = 4
+
+
+def refusal_answer(reason: str | None = None) -> str:
+    """Deterministic refusal text — same shape every time, no model involved."""
+    base = "I can't answer that from the evidence I could verify."
+    detail = f" {reason}" if reason else ""
+    return f"{base}{detail}\n\nTry naming the project or ticket, or widening the time window."
+
+
+def _is_factual(sentence: str) -> bool:
+    return len(sentence.split()) >= MIN_FACTUAL_WORDS and not sentence.rstrip().endswith(":")
+
+
+def _strip_invalid_markers(sentence: str, claim_count: int) -> str:
+    def replace(match: re.Match[str]) -> str:
+        number = int(match.group(1))
+        return match.group(0) if 1 <= number <= claim_count else ""
+
+    return _CITATION_RE.sub(replace, sentence)
+
+
+def _merge_marker_only(sentences: list[str]) -> list[str]:
+    """Attach a citation-only fragment to the sentence before it.
+
+    Models write ``"... because the vendor slipped. [1]"``. The marker belongs
+    to the previous claim, not to a claim of its own: keeping it separate drops
+    the real sentence (it looked uncited) and can leave an answer that is just
+    ``"[1]"``.
+    """
+    merged: list[str] = []
+    for sentence in sentences:
+        stripped = sentence.strip()
+        if not stripped:
+            continue
+        if merged and not _CITATION_RE.sub("", stripped).strip():
+            merged[-1] = f"{merged[-1]} {stripped}"
+        else:
+            merged.append(stripped)
+    return merged
+
+
+def _is_decorative_line(line: str) -> bool:
+    """True when a line is nothing but markers and a ``Citations:``-style label.
+
+    Models bolt ``Citations: [1] [2] [3]`` onto a draft that says nothing.
+    Marker-bearing lines are normally kept, so the dump must be recognised as
+    decoration or it ships as the whole answer.
+    """
+    stripped = _LABEL_RE.sub("", _CITATION_RE.sub("", line))
+    return not _TOKEN_RE.findall(stripped.lower())
+
+
+def _line_key(line: str) -> str:
+    """Comparison key for a line: markers, punctuation and spacing gone, lowercased.
+
+    Punctuation is dropped rather than collapsed because removing a trailing
+    marker leaves a stray space before the full stop (``"2026-12-04 [1]."``
+    becomes ``"2026-12-04 ."``), which would defeat a whitespace-only compare.
+    """
+    return " ".join(_TOKEN_RE.findall(_CITATION_RE.sub("", line).lower()))
+
+
+def _dedupe_lines(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Keep the first of each repeated line; return (kept, dropped duplicates)."""
+    kept: list[str] = []
+    duplicates: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        key = _line_key(line)
+        if key in seen:
+            duplicates.append(line)
+        else:
+            seen.add(key)
+            kept.append(line)
+    return kept, duplicates
+
+
+def _clean_answer(raw: str, claim_count: int) -> tuple[str, list[int], list[str]]:
+    """Drop uncited factual sentences; return (answer, cited claim numbers, dropped)."""
+    used: list[int] = []
+    kept_lines: list[str] = []
+    dropped: list[str] = []
+
+    for raw_line in raw.splitlines():
+        line = _strip_invalid_markers(raw_line.strip(), claim_count)
+        if not line:
+            continue
+        if _is_decorative_line(line):
+            dropped.append(raw_line.strip())
+            continue
+        kept: list[str] = []
+        for sentence in _merge_marker_only(_SENTENCE_RE.split(line)):
+            markers = [int(match) for match in _CITATION_RE.findall(sentence)]
+            if markers:
+                kept.append(sentence)
+                for marker in markers:
+                    if marker not in used:
+                        used.append(marker)
+            elif _is_factual(sentence):
+                dropped.append(sentence)
+            else:
+                kept.append(sentence)
+        if kept:
+            kept_lines.append(" ".join(kept))
+
+    kept_lines, duplicates = _dedupe_lines(kept_lines)
+    dropped.extend(duplicates)
+
+    answer = "\n".join(kept_lines)
+    if not _CITATION_RE.sub("", answer).strip():
+        # Nothing but citation markers: there is no answer to show.
+        if answer:
+            dropped.append(answer)
+        return "", [], dropped
+    # A dropped duplicate must not leave its claim behind in the citation list.
+    cited = {int(match) for match in _CITATION_RE.findall(answer)}
+    used = [marker for marker in used if marker in cited]
+    return answer, used, dropped
+
+
+def _renumber(answer: str, used: list[int]) -> str:
+    """Map cited claim numbers onto 1..k in order of first use."""
+    mapping = {old: new for new, old in enumerate(used, start=1)}
+
+    def replace(match: re.Match[str]) -> str:
+        new = mapping.get(int(match.group(1)))
+        return f"[{new}]" if new is not None else ""
+
+    return _CITATION_RE.sub(replace, answer)
+
+
+def _token_set(text: str) -> set[str]:
+    """Lowercase alphanumeric words — punctuation-free, dates keep their parts."""
+    return set(_TOKEN_RE.findall(text.lower()))
+
+
+def _best_supporting_chunk(claim: Claim, by_id: dict[str, ScrubbedChunk]) -> ScrubbedChunk | None:
+    """Chunk in ``claim.chunk_ids`` whose text best supports the claim text.
+
+    Picking the first listed id is wrong: a claim about the *moved* cutover date
+    (2026-12-04, from the email) can list the Jira comment saying 2026-11-20
+    first, so the answer cited the value it contradicted.
+
+    Score is containment of the claim's word set in the chunk (overlap / claim
+    words, in 0..1), so a chunk that actually states the claim's values outranks
+    a longer chunk that merely mentions the same ticket. Equal scores keep
+    ``chunk_ids`` order (strict ``>``); a claim with no overlap still gets its
+    first available candidate rather than no citation.
+    """
+    claim_tokens = _token_set(claim.text)
+    best: ScrubbedChunk | None = None
+    best_score = -1.0
+    for chunk_id in claim.chunk_ids:
+        chunk = by_id.get(chunk_id)
+        if chunk is None:
+            continue
+        overlap = len(claim_tokens & _token_set(chunk.text))
+        score = overlap / len(claim_tokens) if claim_tokens else 0.0
+        if score > best_score:
+            best = chunk
+            best_score = score
+    return best
+
+
+def _citations_for(used: list[int], claims: list[Claim], by_id: dict[str, ScrubbedChunk]) -> list[
+    Citation
+]:
+    citations: list[Citation] = []
+    for old in used:
+        claim = claims[old - 1]
+        chunk = _best_supporting_chunk(claim, by_id)
+        if chunk is None:
+            continue
+        citations.append(
+            Citation(
+                chunk_id=chunk.chunk_id,
+                document_id=chunk.document_id,
+                source=chunk.source,
+                title=chunk.title,
+                quote=chunk.text[:QUOTE_CHARS],
+                url=chunk.url,
+            )
+        )
+    return citations
+
+
+def _default_client(settings: Settings) -> OpenAICompatibleClient:
+    api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
+    return OpenAICompatibleClient(
+        base_url=settings.llm_base_url,
+        api_key=api_key,
+        default_model=settings.llm_model,
+        timeout_s=settings.llm_timeout_s,
+        max_retries=settings.llm_max_retries,
+        backoff_base_s=settings.llm_backoff_base_s,
+    )
+
+
+async def synthesize(
+    question: str,
+    verified: VerifiedClaims,
+    pack: ScrubbedPack,
+    *,
+    trace_id: str | None = None,
+    client: LLMClient | None = None,
+    sink: EventSink | None = None,
+    settings: Settings | None = None,
+) -> SynthesisResult:
+    """Write the user-facing answer from ``verified`` claims only.
+
+    ``pack`` supplies the citation metadata (title, url, quote); claims were
+    already validated against those chunk ids by the Evidence Agent.
+    """
+    config = settings or get_settings()
+    tracer = Tracer(sink or NullEventSink(), trace_id)
+    asked = question.strip() or verified.question
+
+    def refuse(reason: str | None) -> SynthesisResult:
+        return SynthesisResult(
+            answer=refusal_answer(reason), citations=[], used_claim_ids=[], refused=True
+        )
+
+    if not verified.can_answer or not verified.claims:
+        reason = verified.insufficiency_reason or "no verified claims were available"
+        await tracer.emit(AGENT, "synthesis.refused", {"reason": reason[:500], "question": asked})
+        return refuse(reason)
+
+    by_id = {chunk.chunk_id: chunk for chunk in pack.chunks}
+    # Synthesis is prose, but a reasoning model still wastes the budget thinking.
+    model = config.llm_json_model or config.llm_model
+
+    owns_client = client is None
+    llm: LLMClient = client or _default_client(config)
+    try:
+        response = await llm.complete(
+            CompletionRequest(
+                messages=build_messages(asked, verified.claims),
+                model=model,
+                temperature=0.0,
+                max_tokens=MAX_OUTPUT_TOKENS,
+            )
+        )
+    finally:
+        if owns_client:
+            await llm.aclose()
+
+    cleaned, used, dropped = _clean_answer(response.text, len(verified.claims))
+    citations = _citations_for(used, verified.claims, by_id)
+    if not cleaned or not used or not citations:
+        await tracer.emit(
+            AGENT,
+            "synthesis.refused",
+            {
+                "reason": "answer had no supported, cited sentences",
+                "dropped_sentences": len(dropped),
+                "question": asked,
+            },
+        )
+        return refuse("The model's draft could not be tied back to the evidence.")
+
+    answer = _renumber(cleaned, used)
+    await tracer.emit(
+        AGENT,
+        "synthesis.completed",
+        {
+            "answer_chars": len(answer),
+            "citations": len(citations),
+            "dropped_sentences": len(dropped),
+            "claims_available": len(verified.claims),
+        },
+    )
+    return SynthesisResult(
+        answer=answer,
+        citations=citations,
+        used_claim_ids=[claim - 1 for claim in used],
+        refused=False,
+    )

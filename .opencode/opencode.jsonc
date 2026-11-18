@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Project-local model policy for agentic_rag_over_live_data.
+  //
+  // - GLM-5.3 orchestrates: it is the session's default model and does all
+  //   planning, analysis, verification, and dispatching.
+  // - DeepSeek V4.1 Flash edits: a dedicated `edit` agent that applies file
+  //   changes when the orchestrator dispatches them. Cheap, fast, and every
+  //   diff it produces is reviewed by the orchestrator anyway.
+  //
+  // Config applies to this project only; the global ~/.config/opencode config
+  // is untouched. Edits here reload without a restart.
+  "model": "opencode-go/glm-5.3",
+  "agents": {
+    "edit": {
+      "description": "Applies code edits to this repo (src/, tests/, scripts/, docs/); the GLM-5.3 orchestrator reviews every diff",
+      "mode": "all",
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "system": "You are the editing agent for a Python 3.12+ async FastAPI project (mypy strict, ruff with E,F,I,UP,B,SIM,RUF; line length 100).\n\nRules:\n- Make the smallest correct change. Match surrounding naming, structure, and comment density.\n- Never reformat or refactor code you were not asked to touch.\n- Preserve frozen contracts (src/orchestrator/contracts.py, src/orchestrator/pipeline.py): do not add, rename, or remove fields.\n- Never write secrets, credentials, or .env values into code, tests, or docs.\n- After editing, state which files changed and what remains unverified.\n- If the requested edit conflicts with the existing architecture, say so instead of complying."
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 2,
+  "comments": [
+    {
+      "id": "20101",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10101/comment/20101",
+      "author": {
+        "accountId": "5f1d7c0a9e4b8c0012ab00aa",
+        "displayName": "Grace Hopper",
+        "emailAddress": "grace@example.com",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Budget should be per source, not per run — a Notion sync must not eat Jira's quota." }
+            ]
+          }
+        ]
+      },
+      "created": "2026-11-15T16:02:00.000+0000",
+      "updated": "2026-11-15T16:02:00.000+0000"
+    },
+    {
+      "id": "20102",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10101/comment/20102",
+      "author": {
+        "accountId": "5f1d7c0a9e4b8c0012ab00bb",
+        "displayName": "Alan Turing",
+        "emailAddress": "alan@example.com",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Please add a test that a 500 from the comments endpoint does not lose the issue document." }
+            ]
+          },
+          {
+            "type": "codeBlock",
+            "attrs": { "language": "python" },
+            "content": [
+              { "type": "text", "text": "assert result.documents_upserted == 1\nassert result.errors" }
+            ]
+          }
+        ]
+      },
+      "created": "2026-11-16T08:40:00.000+0000",
+      "updated": "2026-11-16T09:05:00.000+0000"
+    }
+  ]
+}

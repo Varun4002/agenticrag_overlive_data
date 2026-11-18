@@ -1,0 +1,244 @@
+{
+  "description": "Phoenix cutover thread, Nimbus vendor thread, Atlas maintenance notice. Replies keep quoted history on purpose.",
+  "documents": [
+    {
+      "source": "gmail",
+      "source_id": "<CAF8x2b1.phoenix-cutover.1@mail.northwind.example>",
+      "parent_source_id": "<CAF8x2b1.phoenix-cutover@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Phoenix billing cutover readiness — due dates",
+      "content": "Hi Daniel, Ines,\n\nBefore Thursday's review I need a straight answer on the cutover dates. Jira still shows PHX-150 as due 2026-11-20, but Daniel mentioned in standup that it is moving. Which is it?\n\nTwo things Finance cares about: the dual-write window has to finish before the November close on 2026-11-30, and reconciliation (PHX-147) has to match on three consecutive days before they sign off.\n\nFor context, PHX-142 is still open and overdue since 2026-11-10. That one is the SEV-1, and I would rather not run a cutover while one in eight customers cannot reach the billing page.\n\nPlease reply by 2026-11-11 so I can update the status page.\n\nPriya\n\nPriya Raghunathan\nProgram Manager, Billing Platform\npriya.raghunathan@northwind.example\n+1-415-555-0142",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/CAF8x2b1.phoenix-cutover.1@mail.northwind.example",
+      "author": "Priya Raghunathan",
+      "created_at": "2026-11-09T16:12:00+00:00",
+      "updated_at": "2026-11-09T16:12:00+00:00",
+      "labels": [
+        "phoenix",
+        "billing"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<CAF8x2b1.phoenix-cutover.2@mail.northwind.example>",
+      "parent_source_id": "<CAF8x2b1.phoenix-cutover@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Re: Phoenix billing cutover readiness — due dates",
+      "content": "Priya,\n\nShort answer: 2026-11-20 is no longer realistic. Nimbus has not shipped the v3 schema spec and the idempotency work has not started, so a dual-write window before the end of November would be testing two moving targets at once.\n\nI am proposing dual-write starting 2026-11-27 and the primary flag flipping on 2026-12-04. That still finishes before the November close only if Finance accepts reconciliation on the December cycle instead. I have not updated the Jira field yet; I will do it today.\n\nOn PHX-142: agreed, do not cut over while that is open. The Okta metadata fix is a one-line config change and I am waiting on admin access.\n\nDaniel\n\nDaniel Okonkwo\nEngineering Lead, Billing Platform\ndaniel.okonkwo@northwind.example\n\nOn Mon, Nov 9, 2026 at 4:12 PM Priya Raghunathan <priya.raghunathan@northwind.example> wrote:\n> Hi Daniel, Ines,\n>\n> Before Thursday's review I need a straight answer on the cutover dates.\n> Jira still shows PHX-150 as due 2026-11-20, but Daniel mentioned in\n> standup that it is moving. Which is it?\n>\n> Two things Finance cares about: the dual-write window has to finish before\n> the November close on 2026-11-30, and reconciliation (PHX-147) has to match\n> on three consecutive days before they sign off.\n>\n> Priya",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/CAF8x2b1.phoenix-cutover.2@mail.northwind.example",
+      "author": "Daniel Okonkwo",
+      "created_at": "2026-11-10T08:47:00+00:00",
+      "updated_at": "2026-11-10T08:47:00+00:00",
+      "labels": [
+        "phoenix",
+        "billing"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<CAF8x2b1.phoenix-cutover.3@mail.northwind.example>",
+      "parent_source_id": "<CAF8x2b1.phoenix-cutover@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Re: Phoenix billing cutover readiness — due dates",
+      "content": "Both of you,\n\nIf the cutover moves to 2026-12-04, the idempotency work has to start now rather than after the audit. I can have the capture endpoint done by 2026-11-20 if I start Monday and nothing else lands on me; the accessibility audit is currently parked in my queue and I would like to hand it to someone else or push it to December.\n\nOn reconciliation: I am not the owner of PHX-147. Ravi is doing the analysis and I reviewed his correction entries on 2026-11-14. If the status page says I own it, the status page is wrong.\n\nOne more thing: the staging replay key in the webhook runbook page needs rotating. It is in the page body, which is exactly what we told people not to do.\n\nInes\n\nInes Vega\nPayments, Billing Platform\nines.vega@northwind.example",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/CAF8x2b1.phoenix-cutover.3@mail.northwind.example",
+      "author": "Ines Vega",
+      "created_at": "2026-11-12T10:30:00+00:00",
+      "updated_at": "2026-11-12T10:30:00+00:00",
+      "labels": [
+        "phoenix",
+        "billing"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<CAF8x2b1.phoenix-cutover.4@mail.northwind.example>",
+      "parent_source_id": "<CAF8x2b1.phoenix-cutover@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Fwd: Phoenix billing cutover readiness — due dates",
+      "content": "Daniel, Ines,\n\nForwarding the original thread because I want the timeline in one place. Note the difference between the three dates people are quoting: 2026-11-20 (the Jira field), 2026-11-27 (start of dual-write), and 2026-12-04 (flag flip). Only one of those belongs in the status page and I need us to agree which.\n\nMy reading: report 2026-12-04 as the cutover date, with 2026-11-27 as the dual-write start. That means the November close happens on the legacy ledger, which Finance has already accepted verbally but not in writing.\n\nPriya\n\n-----Original Message-----\nFrom: Daniel Okonkwo <daniel.okonkwo@northwind.example>\nSent: Tuesday, November 10, 2026 8:47 AM\nTo: Priya Raghunathan <priya.raghunathan@northwind.example>; Ines Vega <ines.vega@northwind.example>\nSubject: Re: Phoenix billing cutover readiness — due dates\n\nPriya,\n\nShort answer: 2026-11-20 is no longer realistic. Nimbus has not shipped the v3\nschema spec and the idempotency work has not started...\n\nDaniel",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/CAF8x2b1.phoenix-cutover.4@mail.northwind.example",
+      "author": "Priya Raghunathan",
+      "created_at": "2026-11-16T09:05:00+00:00",
+      "updated_at": "2026-11-16T09:05:00+00:00",
+      "labels": [
+        "phoenix",
+        "billing"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<CAF8x2b1.phoenix-cutover.5@mail.northwind.example>",
+      "parent_source_id": "<CAF8x2b1.phoenix-cutover@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Re: Phoenix billing cutover readiness — due dates",
+      "content": "Agreed on 2026-12-04 as the cutover date and 2026-11-27 as the dual-write start. I will update PHX-150 today so the field matches the status page, and I will note the November close assumption in the issue.\n\nTwo caveats. Nimbus still has not confirmed the v3 spec in writing, so 2026-11-27 depends on Tobias delivering on 2026-11-24. And if PHX-142 is still open on 2026-11-27, I will not start the dual-write; the SSO issue is a customer-facing SEV-1 and mixing it with a ledger cutover is how we get an incident nobody can untangle.\n\nInes, take the idempotency work and hand the accessibility audit to Ravi or park it. Capture idempotency is on the critical path, the audit is not.\n\nDaniel",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/CAF8x2b1.phoenix-cutover.5@mail.northwind.example",
+      "author": "Daniel Okonkwo",
+      "created_at": "2026-11-17T07:58:00+00:00",
+      "updated_at": "2026-11-17T07:58:00+00:00",
+      "labels": [
+        "phoenix",
+        "billing"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<nimbus-schema-v3.1@nimbus-systems.example>",
+      "parent_source_id": "<nimbus-schema-v3@nimbus-systems.example>",
+      "doc_type": "email",
+      "title": "Nimbus webhook schema v3 — revised rollout date",
+      "content": "Hi Daniel,\n\nConfirming what we discussed on the phone: the final v3 specification will be published on 2026-11-24, not 2026-11-17. The delay is on our side; the refund-object split needed one more review with our payments team.\n\nThe sandbox payloads you captured on 2026-11-10 came from a pre-release build. Please do not build against them. The per-tenant switch for the refund split will default to the old behaviour for existing tenants, so your parser has to accept both shapes for at least a month.\n\nIf this date moves again I will call you directly. My mobile is +1-415-555-0198 and my colleague Sofia Berg handles escalations when I am travelling.\n\nBest regards,\nTobias Lindqvist\nIntegration Engineering, Nimbus Systems\ntobias.lindqvist@nimbus-systems.example",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/nimbus-schema-v3.1@nimbus-systems.example",
+      "author": "Tobias Lindqvist",
+      "created_at": "2026-11-11T09:15:00+00:00",
+      "updated_at": "2026-11-11T09:15:00+00:00",
+      "labels": [
+        "phoenix",
+        "vendor"
+      ],
+      "acl": {
+        "users": [
+          "daniel.okonkwo@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<nimbus-schema-v3.2@nimbus-systems.example>",
+      "parent_source_id": "<nimbus-schema-v3@nimbus-systems.example>",
+      "doc_type": "email",
+      "title": "Re: Nimbus webhook schema v3 — revised rollout date",
+      "content": "Tobias,\n\nThanks for confirming 2026-11-24 in writing, that is what I needed. Two requests:\n\n1. Send the flag schedule per tenant in writing before the 24th, so we can test both shapes in the sandbox.\n2. Confirm whether the signature_version field is mandatory on day one or only when the flag flips.\n\nOur cutover now depends on your date: dual-write starts 2026-11-27 and the primary flag flips on 2026-12-04. If the 24th slips by more than a couple of days, tell me early and we will move the cutover rather than ship a guess.\n\nDaniel\n\nOn Wed, Nov 11, 2026 at 9:15 AM Tobias Lindqvist <tobias.lindqvist@nimbus-systems.example> wrote:\n> Hi Daniel,\n>\n> Confirming what we discussed on the phone: the final v3 specification will\n> be published on 2026-11-24, not 2026-11-17...",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/nimbus-schema-v3.2@nimbus-systems.example",
+      "author": "Daniel Okonkwo",
+      "created_at": "2026-11-11T14:02:00+00:00",
+      "updated_at": "2026-11-11T14:02:00+00:00",
+      "labels": [
+        "phoenix",
+        "vendor"
+      ],
+      "acl": {
+        "users": [
+          "priya.raghunathan@northwind.example",
+          "daniel.okonkwo@northwind.example",
+          "mei.zhou@northwind.example",
+          "ines.vega@northwind.example",
+          "ravi.chandrasekaran@northwind.example"
+        ],
+        "groups": [
+          "billing-platform"
+        ],
+        "labels": [
+          "phoenix"
+        ]
+      }
+    },
+    {
+      "source": "gmail",
+      "source_id": "<atlas-warehouse-maintenance.1@mail.northwind.example>",
+      "parent_source_id": "<atlas-warehouse-maintenance@mail.northwind.example>",
+      "doc_type": "email",
+      "title": "Atlas warehouse maintenance window — 2026-11-21",
+      "content": "Data team,\n\nThe warehouse maintenance window is confirmed for 2026-11-21 from 02:00 to 06:00 UTC. The finance mart will be read-only during the window and the nightly ETL will not run, so Monday's dashboard will show Saturday's data until the catch-up job finishes.\n\nThis is Atlas only. Nothing in the billing ledgers is affected, and the Phoenix cutover work is unrelated.\n\nGrace\n\nGrace Adeyemi\nData Platform\ngrace.adeyemi@northwind.example",
+      "url": "https://mail.northwind.example/mail/u/0/#inbox/atlas-warehouse-maintenance.1@mail.northwind.example",
+      "author": "Grace Adeyemi",
+      "created_at": "2026-11-16T11:00:00+00:00",
+      "updated_at": "2026-11-16T11:00:00+00:00",
+      "labels": [
+        "atlas"
+      ],
+      "acl": {
+        "users": [
+          "grace.adeyemi@northwind.example"
+        ],
+        "groups": [
+          "data-platform"
+        ],
+        "labels": [
+          "atlas"
+        ]
+      }
+    }
+  ]
+}

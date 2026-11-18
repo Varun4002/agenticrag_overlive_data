@@ -1,0 +1,66 @@
+{
+  "expand": "schema,names",
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 1,
+  "issues": [
+    {
+      "expand": "operations,versionedRepresentations,editmeta,changelog,renderedFields",
+      "id": "10101",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10101",
+      "key": "PHX-101",
+      "fields": {
+        "summary": "Write connector retry/backoff policy",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Jira, Notion and Gmail all rate limit differently. The connector layer needs one shared retry policy: bounded exponential backoff with full jitter, and Retry-After support for 429 responses." }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Implemented in connectors/base.py; verified against httpx.MockTransport." }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "Done",
+          "category": { "key": "done", "name": "Done" }
+        },
+        "assignee": {
+          "accountId": "5f1d7c0a9e4b8c0012ab34cd",
+          "displayName": "Ada Lovelace",
+          "emailAddress": "ada@example.com",
+          "active": true,
+          "timeZone": "Europe/Berlin"
+        },
+        "reporter": {
+          "accountId": "5f1d7c0a9e4b8c0012ab00aa",
+          "displayName": "Grace Hopper",
+          "emailAddress": "grace@example.com",
+          "active": true
+        },
+        "creator": {
+          "accountId": "5f1d7c0a9e4b8c0012ab00aa",
+          "displayName": "Grace Hopper",
+          "emailAddress": "grace@example.com",
+          "active": true
+        },
+        "duedate": "2026-11-20",
+        "priority": { "name": "High", "id": "2" },
+        "labels": ["backend", "phoenix", "connectors"],
+        "issuetype": { "name": "Task", "subtask": false },
+        "project": { "key": "PHX", "name": "Phoenix", "id": "10010" },
+        "resolution": { "name": "Done", "id": "10000" },
+        "created": "2026-11-02T08:14:00.000+0000",
+        "updated": "2026-11-17T08:00:00.000+0000"
+      }
+    }
+  ]
+}

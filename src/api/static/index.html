@@ -1,0 +1,937 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic RAG — operator dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2b3442;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .spacer { flex: 1; }
+  .pill {
+    font-size: 12px; padding: 2px 9px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+    white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: #1f4d2c; }
+  .pill.warn { color: var(--warn); border-color: #4d3f1f; }
+  .pill.bad { color: var(--bad); border-color: #5a2622; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; padding: 10px 20px 0; }
+  nav button {
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    border-bottom: 2px solid transparent; padding: 7px 12px; cursor: pointer;
+    font-size: 13px; border-radius: 6px 6px 0 0;
+  }
+  nav button:hover { color: var(--text); background: var(--panel); }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); background: var(--panel); }
+  main { padding: 18px 20px 60px; max-width: 1500px; }
+  section.tab { display: none; }
+  section.tab.active { display: block; }
+  h2 { font-size: 14px; font-weight: 600; margin: 22px 0 10px; color: var(--text); }
+  h2:first-child { margin-top: 0; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: -4px 0 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .value { font-size: 24px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1000px) { .grid-2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--panel-2); }
+  tbody tr.selected { background: #1b2a3d; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 4px;
+    border: 1px solid var(--border); color: var(--muted); background: var(--panel-2);
+    margin-right: 4px; white-space: nowrap;
+  }
+  .badge.jira { color: #7ea6ff; border-color: #2c3f63; }
+  .badge.notion { color: #d2a8ff; border-color: #43325c; }
+  .badge.gmail { color: #ffa198; border-color: #5c322e; }
+  .badge.ok { color: var(--ok); border-color: #1f4d2c; }
+  .badge.warn { color: var(--warn); border-color: #4d3f1f; }
+  .badge.bad { color: var(--bad); border-color: #5a2622; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  input, select, textarea, button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px;
+  }
+  input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; cursor: pointer; }
+  button.primary:hover { background: #2a7ff5; }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { cursor: pointer; }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  textarea { width: 100%; min-height: 60px; resize: vertical; }
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.45;
+    background: #0b0f16; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; overflow: auto; margin: 6px 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .split { display: grid; grid-template-columns: minmax(340px, 42%) 1fr; gap: 14px; }
+  @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+  .scroll { max-height: 70vh; overflow: auto; }
+  .chunk { border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel); }
+  .chunk .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .chunk .score-bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin: 6px 0; }
+  .chunk .score-bar > div { height: 100%; background: var(--accent); }
+  .event { display: grid; grid-template-columns: 86px 110px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .event .agent { color: var(--accent); font-family: var(--mono); font-size: 12px; }
+  .event .name { font-family: var(--mono); font-size: 12.5px; }
+  .banner { border-radius: 7px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px; }
+  .banner.warn { background: #2b2210; border: 1px solid #4d3f1f; color: #e3b341; }
+  .banner.bad { background: #2d1413; border: 1px solid #5a2622; color: #ff9d97; }
+  .banner.info { background: #10233d; border: 1px solid #21426e; color: #a5cdfb; }
+  .kv { display: grid; grid-template-columns: 220px 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+  .kv div { border-bottom: 1px dotted #202836; padding: 3px 0; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .footer { color: var(--muted); font-size: 12px; padding: 20px; border-top: 1px solid var(--border); }
+  .empty { color: var(--muted); padding: 18px 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agentic RAG <span class="muted">/ operator dashboard</span></h1>
+  <span id="env-pill" class="pill">…</span>
+  <span id="db-pill" class="pill">db …</span>
+  <span id="ask-pill" class="pill ok" title="/ask runs retrieve → scrub → verify → synthesize">answer: pipeline</span>
+  <span class="spacer"></span>
+  <span id="updated" class="muted small"></span>
+  <button id="refresh" class="ghost" title="Reload the current view">↻ refresh</button>
+</header>
+
+<nav>
+  <button data-tab="query" class="active">Ask</button>
+  <button data-tab="overview">Overview</button>
+  <button data-tab="documents">Documents</button>
+  <button data-tab="traces">Traces</button>
+  <button data-tab="actions">Actions</button>
+</nav>
+
+<main>
+  <div id="banner"></div>
+
+  <!-- ───────────────────────── Ask (default) ───────────────────────── -->
+  <section class="tab active" id="tab-query">
+    <h2>Ask a question</h2>
+    <div class="panel">
+      <textarea id="search-q" rows="3"
+        placeholder="e.g. When is the PHX-150 cutover?  ·  What is overdue in Project Phoenix?  ·  Who owns the Nimbus webhook work?"></textarea>
+      <div class="toolbar" style="margin-top:10px">
+        <input id="search-user" list="acl-user-list" placeholder="user_id (ACL)" size="34">
+        <datalist id="acl-user-list"></datalist>
+        <select id="search-topk">
+          <option>5</option><option selected>8</option><option>12</option><option>20</option>
+        </select>
+        <label class="inline"><input type="checkbox" id="search-jira" checked> jira</label>
+        <label class="inline"><input type="checkbox" id="search-notion" checked> notion</label>
+        <label class="inline"><input type="checkbox" id="search-gmail" checked> gmail</label>
+        <label class="inline"><input type="checkbox" id="search-scrub" checked> scrub PII</label>
+        <button class="primary" id="ask-run">Ask</button>
+      </div>
+      <div class="muted small" style="margin-top:8px" id="search-status"></div>
+    </div>
+
+    <div id="answer-panel" style="margin-top:14px"></div>
+    <div id="search-results" style="margin-top:14px"></div>
+  </section>
+
+  <!-- ───────────────────────── Overview ───────────────────────── -->
+  <section class="tab" id="tab-overview">
+    <h2>Corpus</h2>
+    <div class="cards" id="cards">
+      <div class="card"><div class="label">documents</div><div class="value">–</div></div>
+    </div>
+
+    <h2>Sources</h2>
+    <div class="panel" id="sources"><div class="empty">Loading…</div></div>
+
+    <div class="grid-2" style="margin-top:16px">
+      <div>
+        <h2>Sync state</h2>
+        <div class="panel" id="sync-state"><div class="empty">Loading…</div></div>
+      </div>
+      <div>
+        <h2>Runtime configuration</h2>
+        <div class="panel" id="runtime"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:16px">
+      <div>
+        <h2>Known ACL users</h2>
+        <p class="hint">Retrieval returns a document only when the user is in <span class="mono">acl.users</span> or <span class="mono">"*"</span> is. Click one to use it on the Ask tab.</p>
+        <div class="panel" id="acl-users"><div class="empty">Loading…</div></div>
+      </div>
+      <div>
+        <h2>Recent events</h2>
+        <div class="panel" id="recent-events"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Documents ───────────────────────── -->
+  <section class="tab" id="tab-documents">
+    <div class="toolbar">
+      <select id="doc-source">
+        <option value="">all sources</option>
+        <option value="jira">jira</option>
+        <option value="notion">notion</option>
+        <option value="gmail">gmail</option>
+      </select>
+      <input id="doc-q" placeholder="search title / id / content" size="34">
+      <select id="doc-limit">
+        <option>25</option><option selected>50</option><option>100</option><option>200</option>
+      </select>
+      <label class="inline"><input type="checkbox" id="doc-history"> include superseded</label>
+      <button class="primary" id="doc-load">Load</button>
+      <span id="doc-count" class="muted small"></span>
+    </div>
+    <div class="split">
+      <div class="panel scroll" id="doc-list"><div class="empty">Press “Load”.</div></div>
+      <div class="panel" id="doc-detail"><div class="empty">Select a document to inspect its text and chunks.</div></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Traces ───────────────────────── -->
+  <section class="tab" id="tab-traces">
+    <div class="toolbar">
+      <button class="primary" id="trace-load">Load recent traces</button>
+      <input id="trace-jump" placeholder="jump to trace id" size="40">
+      <button class="ghost" id="trace-jump-btn">Open</button>
+      <span id="trace-count" class="muted small"></span>
+    </div>
+    <div class="split">
+      <div class="panel scroll" id="trace-list"><div class="empty">Press “Load recent traces”.</div></div>
+      <div class="panel" id="trace-detail"><div class="empty">Select a trace to see the agent timeline.</div></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Actions ───────────────────────── -->
+  <section class="tab" id="tab-actions">
+    <p class="hint">Question answering lives in the <strong>Ask</strong> tab. These are the ingestion and indexing controls.</p>
+    <div class="grid-2">
+      <div class="panel">
+        <h2 style="margin-top:0">Seed fixture corpus</h2>
+        <p class="hint">
+          Upserts <span class="mono">fixtures/corpus</span> (44 synthetic documents) with deterministic ids.
+          Idempotent; refused in prod. Then run a backfill to chunk and embed them.
+        </p>
+        <label class="inline"><input type="checkbox" id="seed-confirm"> I understand this writes documents</label>
+        <div class="row" style="margin-top:8px"><button class="primary" id="seed-run">Seed corpus</button></div>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Jira sync</h2>
+        <p class="hint">Runs <span class="mono">connectors.service.sync</span> — the same code path as
+          <span class="mono">scripts/sync_jira.py</span>. Requires <span class="mono">JIRA_*</span> credentials
+          and a database. Needs network access to your Jira tenant.</p>
+        <div class="toolbar">
+          <select id="sync-source"><option>jira</option><option>notion</option><option>gmail</option></select>
+          <label class="inline"><input type="checkbox" id="sync-full"> full resync (detects deletions)</label>
+          <button class="primary" id="sync-run">Run sync</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Embedding backfill</h2>
+        <p class="hint">Chunks and embeds documents via <span class="mono">Indexer</span>. Bounded to
+          500 documents per click and 240 s wall clock. <em>fake</em> writes deterministic vectors and makes
+          no provider calls — useful to exercise the pipeline offline.</p>
+        <div class="toolbar">
+          <input id="bf-limit" type="number" min="1" max="500" value="50" style="width:90px">
+          <select id="bf-embedder"><option value="auto">auto (provider)</option><option value="fake">fake (offline)</option></select>
+          <select id="bf-source"><option value="">all sources</option><option>jira</option><option>notion</option><option>gmail</option></select>
+          <label class="inline"><input type="checkbox" id="bf-missing"> only unindexed</label>
+          <label class="inline"><input type="checkbox" id="bf-force"> force re-embed</label>
+          <button class="primary" id="bf-run">Run backfill</button>
+        </div>
+      </div>
+    </div>
+
+    <h2>Last result</h2>
+    <div class="panel"><pre id="action-out" class="mono">No action run yet.</pre></div>
+  </section>
+</main>
+
+<div class="footer">
+  Single-file dashboard, no build step, no external assets. Backed by
+  <span class="mono">/admin/*</span> (enabled by <span class="mono">ADMIN_ENABLED</span>;
+  default on in dev/test, off elsewhere).
+</div>
+
+<script>
+"use strict";
+
+// ── tiny helpers ───────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value === null || value === undefined) continue;
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key === "html") throw new Error("no innerHTML with server data");
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (key === "dataset") Object.assign(node.dataset, value);
+    else node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function fmtInt(value) {
+  return value === null || value === undefined ? "–" : Number(value).toLocaleString();
+}
+function fmtPct(value) {
+  return value === null || value === undefined ? "–" : (Number(value) * 100).toFixed(1) + "%";
+}
+function fmtTime(iso) {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+function shortId(id) {
+  return id ? String(id).slice(0, 8) : "–";
+}
+function truncate(value, n) {
+  const s = value === null || value === undefined ? "" : String(value);
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, Object.assign({ headers: { "Accept": "application/json" } }, options));
+  const type = res.headers.get("content-type") || "";
+  const body = type.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    let detail = body && body.detail !== undefined ? body.detail : body;
+    if (typeof detail !== "string") detail = JSON.stringify(detail, null, 2);
+    throw new Error(res.status + " " + res.statusText + " — " + detail);
+  }
+  return body;
+}
+
+function banner(message, kind) {
+  const host = $("banner");
+  host.replaceChildren();
+  if (!message) return;
+  host.append(el("div", { class: "banner " + (kind || "warn"), text: message }));
+}
+
+function sourceBadge(source) {
+  return el("span", { class: "badge " + (source || ""), text: source || "?" });
+}
+
+// ── navigation ─────────────────────────────────────────────────────────────
+document.querySelectorAll("nav button").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b === button));
+    document.querySelectorAll("section.tab").forEach((s) => {
+      s.classList.toggle("active", s.id === "tab-" + button.dataset.tab);
+    });
+    if (button.dataset.tab === "overview") loadOverview();
+    if (button.dataset.tab === "documents" && !$("doc-list").dataset.loaded) loadDocuments();
+    if (button.dataset.tab === "traces" && !$("trace-list").dataset.loaded) loadTraces();
+  });
+});
+
+// ── overview ───────────────────────────────────────────────────────────────
+let overviewState = null;
+
+async function loadOverview() {
+  try {
+    const data = await api("/admin/overview");
+    overviewState = data;
+    banner("");
+    renderHeader(data);
+    renderCards(data);
+    renderSources(data);
+    renderSyncState(data);
+    renderRuntime(data);
+    renderAclUsers(data);
+    renderRecentEvents(data);
+  } catch (error) {
+    banner("Could not load /admin/overview — " + error.message, "bad");
+  }
+}
+
+function renderHeader(data) {
+  const env = data.app.environment;
+  $("env-pill").textContent = "env: " + env;
+  $("env-pill").className = "pill" + (env === "prod" ? " bad" : "");
+  const db = data.database;
+  const dbPill = $("db-pill");
+  if (!db.configured) { dbPill.textContent = "db: not configured"; dbPill.className = "pill warn"; }
+  else if (!db.reachable) { dbPill.textContent = "db: unreachable"; dbPill.className = "pill bad"; }
+  else { dbPill.textContent = "db: ok"; dbPill.className = "pill ok"; }
+  $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+}
+
+function renderCards(data) {
+  const host = $("cards");
+  host.replaceChildren();
+  const counts = data.counts;
+  if (!counts) {
+    host.append(el("div", { class: "empty", text: "No database — counts unavailable." }));
+    return;
+  }
+  const embeddedShare = counts.chunks ? counts.chunks_embedded / counts.chunks : null;
+  const cards = [
+    ["documents", counts.documents_current, counts.documents_total !== counts.documents_current
+      ? (counts.documents_total - counts.documents_current) + " superseded" : "current rows"],
+    ["chunks", counts.chunks, fmtPct(embeddedShare) + " embedded"],
+    ["traces", counts.traces, counts.events + " events"],
+    ["redactions", counts.redactions, "PII audit rows"],
+    ["answer cache", counts.answer_cache, "memory (M4)"],
+    ["entities", counts.entities, "registry (M4)"],
+  ];
+  for (const [label, value, sub] of cards) {
+    host.append(el("div", { class: "card" },
+      el("div", { class: "label", text: label }),
+      el("div", { class: "value", text: fmtInt(value) }),
+      el("div", { class: "sub", text: sub })));
+  }
+}
+
+function renderSources(data) {
+  const host = $("sources");
+  host.replaceChildren();
+  if (!data.by_source || data.by_source.length === 0) {
+    host.append(el("div", { class: "empty", text: "No documents in this database yet. Seed the fixture corpus from the Actions tab." }));
+    return;
+  }
+  const table = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", { text: "source" }), el("th", { text: "documents" }), el("th", { text: "indexed" }))));
+  const body = el("tbody");
+  for (const row of data.by_source) {
+    body.append(el("tr", {},
+      el("td", {}, sourceBadge(row.source)),
+      el("td", { text: fmtInt(row.n) }),
+      el("td", { text: fmtInt(row.indexed) })));
+  }
+  table.append(body);
+  host.append(table);
+}
+
+function renderSyncState(data) {
+  const host = $("sync-state");
+  host.replaceChildren();
+  if (!data.sync_state || data.sync_state.length === 0) {
+    host.append(el("div", { class: "empty", text: "No sync has run against this database." }));
+    return;
+  }
+  const table = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", { text: "source" }), el("th", { text: "status" }), el("th", { text: "watermark" }),
+    el("th", { text: "last run" }))));
+  const body = el("tbody");
+  for (const row of data.sync_state) {
+    const kind = row.last_status === "ok" ? "ok" : row.last_status === "partial" ? "warn" : row.last_status === "error" ? "bad" : "";
+    body.append(el("tr", {},
+      el("td", { text: row.source }),
+      el("td", {}, el("span", { class: "badge " + kind, text: row.last_status || "–" })),
+      el("td", { class: "mono small", text: fmtTime(row.watermark) }),
+      el("td", { class: "mono small", text: fmtTime(row.last_run_at) })));
+    if (row.error) {
+      body.append(el("tr", {}, el("td", { colspan: "4", class: "small muted", text: row.error })));
+    }
+  }
+  table.append(body);
+  host.append(table);
+}
+
+function renderRuntime(data) {
+  const host = $("runtime");
+  host.replaceChildren();
+  const c = data.config;
+  const conn = data.connectors || {};
+  const rows = [
+    ["LLM model", c.llm_model],
+    ["LLM JSON model", c.llm_json_model],
+    ["LLM endpoint", c.llm_base_url],
+    ["embedding model", c.embedding_model + " (" + c.embedding_dimensions + " dims)"],
+    ["sufficiency threshold", c.evidence_sufficiency_threshold],
+    ["Jira configured", conn.jira_configured ? "yes" : "no"],
+    ["Jira projects", (conn.jira_projects || []).join(", ") || "–"],
+    ["answer mode", data.answer_mode],
+    ["PII salt", c.pii_hash_salt_is_default ? "DEFAULT dev salt — set PII_HASH_SALT" : "custom"],
+  ];
+  const grid = el("div", { class: "kv" });
+  for (const [k, v] of rows) {
+    grid.append(el("div", { class: "k", text: k }), el("div", { class: "v", text: String(v) }));
+  }
+  host.append(grid);
+  if (c.pii_hash_salt_is_default) {
+    host.append(el("div", { class: "banner warn", style: "margin:10px 0 0", text:
+      "PII audit hashes use the documented dev salt; set PII_HASH_SALT before any real data." }));
+  }
+}
+
+function renderAclUsers(data) {
+  const host = $("acl-users");
+  const list = $("acl-user-list");
+  host.replaceChildren();
+  list.replaceChildren();
+  const users = data.acl_users || [];
+  if (users.length === 0) {
+    host.append(el("div", { class: "empty", text: "No ACL users found (no documents, or an empty acl.users)." }));
+    return;
+  }
+  for (const row of users) {
+    list.append(el("option", { value: row.user_id }));
+    host.append(el("div", { class: "row", style: "padding:3px 0" },
+      el("a", {
+        href: "#", class: "mono small", text: row.user_id,
+        onclick: (event) => {
+          event.preventDefault();
+          $("search-user").value = row.user_id;
+          document.querySelector('nav button[data-tab="search"]').click();
+        },
+      }),
+      el("span", { class: "muted small", text: row.documents + " docs" })));
+  }
+  if (!$("search-user").value) $("search-user").value = users[0].user_id;
+}
+
+function renderRecentEvents(data) {
+  const host = $("recent-events");
+  host.replaceChildren();
+  const rows = data.recent_events || [];
+  if (rows.length === 0) {
+    host.append(el("div", { class: "empty", text: "No events yet. Ask a question, or run a sync." }));
+    return;
+  }
+  for (const row of rows) {
+    host.append(el("div", { class: "row", style: "padding:2px 0;gap:8px" },
+      el("span", { class: "muted mono small", style: "width:74px", text: fmtTime(row.created_at).split(", ").pop() }),
+      el("span", { class: "badge", text: row.agent }),
+      el("span", { class: "mono small", text: row.event })));
+  }
+}
+
+// ── documents ──────────────────────────────────────────────────────────────
+async function loadDocuments() {
+  const params = new URLSearchParams();
+  if ($("doc-source").value) params.set("source", $("doc-source").value);
+  if ($("doc-q").value.trim()) params.set("q", $("doc-q").value.trim());
+  params.set("limit", $("doc-limit").value);
+  params.set("include_history", $("doc-history").checked ? "true" : "false");
+  try {
+    const data = await api("/admin/documents?" + params.toString());
+    $("doc-list").dataset.loaded = "1";
+    $("doc-count").textContent = data.total + " matching";
+    const host = $("doc-list");
+    host.replaceChildren();
+    if (data.documents.length === 0) {
+      host.append(el("div", { class: "empty", text: "No documents match." }));
+      return;
+    }
+    const table = el("table", {}, el("thead", {}, el("tr", {},
+      el("th", { text: "source" }), el("th", { text: "id" }), el("th", { text: "title" }),
+      el("th", { text: "chunks" }), el("th", { text: "updated" }))));
+    const body = el("tbody");
+    for (const doc of data.documents) {
+      const row = el("tr", { class: "clickable" },
+        el("td", {}, sourceBadge(doc.source)),
+        el("td", { class: "mono small", text: truncate(doc.source_id, 26) }),
+        el("td", { text: truncate(doc.title, 64) },
+          doc.is_current ? null : el("span", { class: "badge warn", text: "superseded", style: "margin-left:6px" })),
+        el("td", { text: doc.chunks }),
+        el("td", { class: "small muted", text: fmtTime(doc.updated_at) }));
+      row.addEventListener("click", () => {
+        body.querySelectorAll("tr").forEach((r) => r.classList.remove("selected"));
+        row.classList.add("selected");
+        openDocument(doc.id, false);
+      });
+      body.append(row);
+    }
+    table.append(body);
+    host.append(table);
+  } catch (error) {
+    banner("Could not load documents — " + error.message, "bad");
+  }
+}
+
+async function openDocument(id, full) {
+  const host = $("doc-detail");
+  host.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+  try {
+    const data = await api("/admin/documents/" + encodeURIComponent(id) + (full ? "?full=true" : ""));
+    const doc = data.document;
+    host.replaceChildren();
+    host.append(el("div", { class: "row" },
+      sourceBadge(doc.source),
+      el("strong", { text: doc.title }),
+      doc.url ? el("a", { href: doc.url, target: "_blank", rel: "noreferrer", class: "small", text: "open in source ↗" }) : null));
+    host.append(el("div", { class: "muted small", style: "margin:6px 0 10px" },
+      doc.source_id + " · " + doc.doc_type + " · updated " + fmtTime(doc.updated_at) +
+      " · " + doc.content_chars + " chars · " + data.chunks.length + " chunks" +
+      (doc.is_current ? "" : " · SUPERSEDED")));
+    host.append(el("details", {}, el("summary", { text: "document content" }),
+      el("pre", { text: doc.content })));
+    if (data.chunks.length === 0) {
+      host.append(el("div", { class: "banner info", text: "This document has no chunks yet — run an embedding backfill." }));
+    }
+    for (const chunk of data.chunks) {
+      const meta = chunk.meta || {};
+      const badges = el("div", { class: "row", style: "gap:4px;margin:4px 0" },
+        el("span", { class: "badge", text: "#" + chunk.seq }),
+        el("span", { class: "badge " + (chunk.has_embedding ? "ok" : "warn"), text: chunk.has_embedding ? "embedded" : "no vector" }),
+        el("span", { class: "badge", text: chunk.chars + " chars" }),
+        Array.isArray(meta.heading_path) && meta.heading_path.length
+          ? el("span", { class: "badge", text: meta.heading_path.join(" › ") }) : null,
+        meta.section ? el("span", { class: "badge", text: String(meta.section) }) : null);
+      host.append(el("div", { class: "chunk" },
+        el("div", { class: "row small muted", text: shortId(chunk.id) + " · hash " + truncate(chunk.content_hash, 12) }),
+        badges,
+        el("pre", { text: chunk.text })));
+    }
+    host.append(el("button", {
+      class: "ghost", text: full ? "Show shortened text" : "Load full text",
+      onclick: () => openDocument(id, !full),
+    }));
+  } catch (error) {
+    host.replaceChildren(el("div", { class: "banner bad", text: error.message }));
+  }
+}
+
+$("doc-load").addEventListener("click", loadDocuments);
+$("doc-q").addEventListener("keydown", (event) => { if (event.key === "Enter") loadDocuments(); });
+
+// ── ask + retrieval ────────────────────────────────────────────────────────
+async function runSearch() {
+  const query = $("search-q").value.trim();
+  if (!query) { banner("Type a question first.", "warn"); return; }
+  const sources = [];
+  if ($("search-jira").checked) sources.push("jira");
+  if ($("search-notion").checked) sources.push("notion");
+  if ($("search-gmail").checked) sources.push("gmail");
+  $("search-status").textContent = "retrieving evidence…";
+  $("search-results").replaceChildren();
+  try {
+    const body = {
+      query: query,
+      user_id: $("search-user").value.trim() || "anonymous",
+      top_k: Number($("search-topk").value),
+      sources: sources.length === 3 ? null : sources,
+      scrub: $("search-scrub").checked,
+    };
+    const data = await api("/admin/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("search-status").textContent = data.chunks.length + " chunks in " + data.elapsed_ms + " ms" +
+      (data.degraded_reason ? " · degraded: " + data.degraded_reason : "") +
+      (data.redaction_count ? " · " + data.redaction_count + " redactions" : "");
+    renderSearchResults(data);
+  } catch (error) {
+    $("search-status").textContent = "";
+    banner("Retrieval failed — " + error.message, "bad");
+  }
+}
+
+function renderSearchResults(data) {
+  const host = $("search-results");
+  host.replaceChildren();
+  if (data.chunks.length === 0) {
+    host.append(el("div", { class: "banner info", text:
+      "No chunks returned. If this database is empty, seed the fixture corpus and run a backfill " +
+      "(Actions tab). Otherwise: this user may see no document (ACL is enforced in SQL), the score " +
+      "floor may have dropped the tail, or nothing is indexed yet." }));
+    return;
+  }
+  const maxScore = Math.max(...data.chunks.map((c) => c.score), 0.000001);
+  for (const chunk of data.chunks) {
+    host.append(el("div", { class: "chunk" },
+      el("div", { class: "head" },
+        sourceBadge(chunk.source),
+        el("span", { class: "mono small", text: chunk.source_id }),
+        el("strong", { text: truncate(chunk.title, 80) }),
+        chunk.stale ? el("span", { class: "badge warn", text: "stale" }) : null,
+        ...(chunk.redacted_types || []).map((type) => el("span", { class: "badge bad", text: type.toLowerCase() })),
+        el("span", { class: "muted small", text: "score " + chunk.score.toFixed(4) })),
+      el("div", { class: "score-bar" }, el("div", { style: "width:" + Math.max(2, (chunk.score / maxScore) * 100).toFixed(1) + "%" })),
+      el("div", { class: "muted small", text: "updated " + fmtTime(chunk.updated_at) + " · chunk " + shortId(chunk.chunk_id) }),
+      el("pre", { text: chunk.text })));
+  }
+}
+
+$("search-q").addEventListener("keydown", (event) => {
+  // Enter submits; Shift+Enter inserts a newline (it is a textarea).
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("ask-run").click();
+  }
+});
+
+// ── traces ─────────────────────────────────────────────────────────────────
+async function loadTraces() {
+  try {
+    const data = await api("/admin/traces?limit=40");
+    $("trace-list").dataset.loaded = "1";
+    $("trace-count").textContent = data.traces.length + " traces";
+    const host = $("trace-list");
+    host.replaceChildren();
+    if (data.traces.length === 0) {
+      host.append(el("div", { class: "empty", text: "No traces recorded yet. Run a sync, a retrieval, or ask a question." }));
+      return;
+    }
+    const table = el("table", {}, el("thead", {}, el("tr", {},
+      el("th", { text: "trace" }), el("th", { text: "events" }),
+      el("th", { text: "agents" }), el("th", { text: "started" }), el("th", { text: "ms" }))));
+    const body = el("tbody");
+    for (const trace of data.traces) {
+      const row = el("tr", { class: "clickable" },
+        el("td", { class: "mono small", text: shortId(trace.trace_id) }),
+        el("td", { text: trace.events }),
+        el("td", { class: "small muted", text: (trace.agents || []).join(", ") }),
+        el("td", { class: "small muted", text: fmtTime(trace.started_at) }),
+        el("td", { text: trace.total_latency_ms }));
+      row.addEventListener("click", () => {
+        body.querySelectorAll("tr").forEach((r) => r.classList.remove("selected"));
+        row.classList.add("selected");
+        openTrace(trace.trace_id);
+      });
+      body.append(row);
+    }
+    table.append(body);
+    host.append(table);
+  } catch (error) {
+    banner("Could not load traces — " + error.message, "bad");
+  }
+}
+
+async function openTrace(traceId) {
+  const host = $("trace-detail");
+  host.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+  try {
+    const data = await api("/admin/traces/" + encodeURIComponent(traceId));
+    host.replaceChildren();
+    host.append(el("div", { class: "mono small", style: "margin-bottom:8px",
+      text: traceId + " · " + data.events.length + " events · " + data.elapsed_ms + " ms elapsed · " +
+        data.total_latency_ms + " ms measured" }));
+    for (const event of data.events) {
+      const hasPayload = event.payload && Object.keys(event.payload).length > 0;
+      host.append(el("div", { class: "event" },
+        el("div", { class: "muted small", text: event.created_at ? event.created_at.slice(11, 23) : "–" }),
+        el("div", { class: "agent", text: event.agent }),
+        el("div", {},
+          el("div", { class: "row" },
+            el("span", { class: "name", text: event.event }),
+            event.latency_ms !== null && event.latency_ms !== undefined
+              ? el("span", { class: "badge", text: event.latency_ms + " ms" }) : null),
+          hasPayload
+            ? el("details", {}, el("summary", { text: "payload" }),
+                el("pre", { text: JSON.stringify(event.payload, null, 2) }))
+            : null)));
+    }
+  } catch (error) {
+    host.replaceChildren(el("div", { class: "banner bad", text: error.message }));
+  }
+}
+
+$("trace-load").addEventListener("click", loadTraces);
+$("trace-jump-btn").addEventListener("click", () => {
+  const id = $("trace-jump").value.trim();
+  if (id) openTrace(id);
+});
+$("trace-jump").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && $("trace-jump").value.trim()) openTrace($("trace-jump").value.trim());
+});
+
+// ── actions ────────────────────────────────────────────────────────────────
+function showAction(label, payload) {
+  $("action-out").textContent = label + "\n\n" + JSON.stringify(payload, null, 2);
+  if (payload && payload.trace_id) {
+    $("trace-jump").value = payload.trace_id;
+    $("action-out").append(
+      el("div", { class: "row", style: "margin-top:8px" },
+        el("button", {
+          class: "ghost", text: "Open trace →",
+          onclick: () => {
+            document.querySelector('nav button[data-tab="traces"]').click();
+            $("trace-jump").value = payload.trace_id;
+            openTrace(payload.trace_id);
+          },
+        })));
+  }
+}
+
+function busy(button, label, fn) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  Promise.resolve()
+    .then(fn)
+    .catch((error) => showAction("FAILED", { error: error.message }))
+    .finally(() => { button.disabled = false; button.textContent = original; });
+}
+
+$("ask-run").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  busy(button, "…", async () => {
+    const question = $("search-q").value.trim();
+    if (!question) { banner("Type a question first.", "warn"); return; }
+    banner("");
+    $("search-status").textContent = "asking the pipeline…";
+    $("answer-panel").replaceChildren();
+    let answer = null;
+    try {
+      answer = await api("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({
+          question: question,
+          session_id: window.__sessionId,
+          user_id: ($("search-user").value || "").trim() || "dashboard",
+        }),
+      });
+      renderAnswer(answer, question);
+    } catch (error) {
+      renderAnswerError(error.message);
+    }
+    // Always show the evidence, placeholder answer or not: it is the real thing.
+    await runSearch();
+  });
+});
+
+function renderAnswer(data, question) {
+  const host = $("answer-panel");
+  host.replaceChildren();
+  const refused = data.refusal !== null && data.refusal !== undefined;
+  const panel = el("div", { class: "panel" });
+  panel.append(el("div", { class: "row" },
+    el("span", { class: "badge " + (refused ? "warn" : "ok"), text: refused ? "refused: " + data.refusal.reason : "answered" }),
+    data.degraded ? el("span", { class: "badge warn", text: "degraded" }) : null,
+    el("span", { class: "muted small", text: "trace " + shortId(data.trace_id) }),
+    el("button", {
+      class: "ghost small", text: "open trace →",
+      onclick: () => {
+        document.querySelector('nav button[data-tab="traces"]').click();
+        $("trace-jump").value = data.trace_id;
+        openTrace(data.trace_id);
+      },
+    })));
+  panel.append(el("pre", { text: data.answer }));
+  if (refused) {
+    panel.append(el("div", { class: "banner warn", style: "margin:8px 0 0", text:
+      "The pipeline declined to answer" + (data.refusal.detail ? ": " + data.refusal.detail : "") +
+      ". The evidence below is what it could see; nothing verified enough to answer from." }));
+  }
+  for (const citation of data.citations || []) {
+    panel.append(el("div", { class: "chunk" },
+      el("div", { class: "row" }, sourceBadge(citation.source), el("strong", { text: citation.title })),
+      el("div", { class: "muted small", text: citation.quote }),
+      citation.url ? el("a", { href: citation.url, target: "_blank", rel: "noreferrer", class: "small", text: "open in source ↗" }) : null));
+  }
+  host.append(panel);
+}
+
+function renderAnswerError(message) {
+  $("answer-panel").replaceChildren(el("div", { class: "banner bad", text: "Ask failed — " + message }));
+}
+
+$("seed-run").addEventListener("click", (event) => {
+  if (!$("seed-confirm").checked) { banner("Tick the confirm box first.", "warn"); return; }
+  busy(event.currentTarget, "seeding…", async () => {
+    showAction("seed", await api("/admin/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    }));
+    loadOverview();
+  });
+});
+
+$("sync-run").addEventListener("click", (event) => {
+  busy(event.currentTarget, "syncing…", async () => {
+    showAction("sync", await api("/admin/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ source: $("sync-source").value, full: $("sync-full").checked }),
+    }));
+    loadOverview();
+  });
+});
+
+$("bf-run").addEventListener("click", (event) => {
+  busy(event.currentTarget, "embedding…", async () => {
+    showAction("backfill", await api("/admin/backfill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({
+        limit: Number($("bf-limit").value) || 50,
+        only_missing: $("bf-missing").checked,
+        force: $("bf-force").checked,
+        source: $("bf-source").value || null,
+        embedder: $("bf-embedder").value,
+      }),
+    }));
+    loadOverview();
+  });
+});
+
+// ── boot ───────────────────────────────────────────────────────────────────
+window.__sessionId = "dashboard-" + Date.now().toString(36);
+$("refresh").addEventListener("click", () => {
+  const active = document.querySelector("nav button.active").dataset.tab;
+  if (active === "overview") loadOverview();
+  else if (active === "documents") loadDocuments();
+  else if (active === "traces") loadTraces();
+  else loadOverview();
+});
+
+// The Ask tab is the landing page; the overview still loads so the header
+// pills, ACL user list and source counts are populated behind it.
+loadOverview();
+setInterval(() => {
+  const active = document.querySelector("nav button.active").dataset.tab;
+  if (active === "overview") loadOverview();
+}, 15000);
+</script>
+</body>
+</html>
