@@ -6,10 +6,13 @@ from synth_helpers import FakeClient, chunk, claim, pack, verified
 
 from config import Settings
 from db.tracing import InMemoryEventSink
+from orchestrator.pipeline import SynthesisResult
+from synthesis.prompts import MAX_OUTPUT_TOKENS
 from synthesis.synthesizer import (
     _best_supporting_chunk,
     _dedupe_lines,
     _is_decorative_line,
+    _is_negated,
     _line_key,
     synthesize,
 )
@@ -34,6 +37,7 @@ async def test_cited_answer_is_kept_and_citations_resolved() -> None:
     assert result.citations[0].chunk_id == "c1"
     assert result.citations[0].source == "jira"
     assert result.used_claim_ids == [0]
+    assert result.refusal_reason is None
 
 
 async def test_uncited_factual_sentence_is_stripped() -> None:
@@ -70,6 +74,7 @@ async def test_answer_with_no_supported_sentences_becomes_refusal() -> None:
     assert result.refused is True
     assert result.citations == []
     assert "can't answer" in result.answer
+    assert result.refusal_reason == "the draft answer could not be tied back to the evidence"
     assert "synthesis.refused" in [event.event for event in sink.events_for("trace-refuse")]
 
 
@@ -86,6 +91,9 @@ async def test_unanswerable_evidence_refuses_without_calling_the_model() -> None
     assert client.requests == []
     assert result.refused is True
     assert "coverage 0.10" in result.answer
+    assert result.refusal_reason == (
+        "insufficient evidence: question coverage 0.10 is below the 0.50 threshold"
+    )
 
 
 async def test_invalid_marker_is_removed_and_sentence_dropped() -> None:
@@ -265,4 +273,363 @@ def test_best_supporting_chunk_keeps_first_candidate_without_overlap() -> None:
     chosen = _best_supporting_chunk(claim("wholly different words", "c1", "c2"), by_id)
     assert chosen is not None
     assert chosen.chunk_id == "c1"
+
+
+# ---------------------------------------------------------------------------
+# Marker resolution, citation dedupe, truncated completions
+# ---------------------------------------------------------------------------
+
+
+async def test_non_contiguous_claim_id_is_reported_as_is() -> None:
+    """Markers are positions; ``used_claim_ids`` must report real ``claim_id``s.
+
+    The old code returned ``marker - 1``, which silently reported a list index
+    as a claim id whenever the ids were not ``0..n``.
+    """
+    pack_ = pack(chunk("c2", "PHX-131 is blocked waiting on the vendor contract."))
+    verified_ = verified(claim("PHX-131 is blocked", "c2", claim_id=5))
+    client = FakeClient("PHX-131 is blocked by the vendor contract [1].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert [citation.chunk_id for citation in result.citations] == ["c2"]
+    assert result.used_claim_ids == [5]
+
+
+async def test_claims_sharing_a_chunk_yield_one_citation() -> None:
+    """Two claims on the same chunk are one delivered citation, still cited twice."""
+    pack_ = pack(chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."))
+    verified_ = verified(
+        claim("PHX-150 cutover is 2026-11-20", "c1", claim_id=0),
+        claim("PHX-150 cutover date is 2026-11-20", "c1", claim_id=1),
+    )
+    client = FakeClient("The cutover is 2026-11-20 [1] and was confirmed [2].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert [citation.chunk_id for citation in result.citations] == ["c1"]
+    # Both markers now point at the single delivered citation.
+    assert result.answer.strip().count("[1]") == 2
+    assert "[2]" not in result.answer
+    assert result.used_claim_ids == [0, 1]
+
+
+async def test_dedupe_keeps_first_use_order_and_renumbers_around_it() -> None:
+    pack_ = pack(
+        chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."),
+        chunk("c2", "PHX-131 is blocked waiting on the vendor contract.", source_id="PHX-131"),
+    )
+    verified_ = verified(
+        claim("PHX-150 cutover is 2026-11-20", "c1", claim_id=0),
+        claim("PHX-131 is blocked", "c2", claim_id=1),
+        claim("PHX-150 cutover is 2026-11-20 per Jira", "c1", claim_id=2),
+    )
+    client = FakeClient("The cutover is 2026-11-20 [1]. PHX-131 is blocked [2]. Jira agrees [3].")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert [citation.chunk_id for citation in result.citations] == ["c1", "c2"]
+    assert result.answer == (
+        "The cutover is 2026-11-20 [1]. PHX-131 is blocked [2]. Jira agrees [1]."
+    )
+
+
+async def test_truncated_completion_refuses_instead_of_shipping_a_cut_off_answer() -> None:
+    pack_ = pack(chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."))
+    verified_ = verified(claim("PHX-150 cutover is 2026-11-20", "c1"))
+    sink = InMemoryEventSink()
+    client = FakeClient(
+        "The PHX-150 cutover is scheduled for 2026-11-20 [1] and the vendor",
+        finish_reason="length",
+    )
+
+    result = await synthesize(
+        "q",
+        verified_,
+        pack_,
+        trace_id="trace-truncated",
+        client=client,
+        sink=sink,
+        settings=_settings(),
+    )
+
+    assert result.refused is True
+    assert result.citations == []
+    assert "can't answer" in result.answer
+    assert "vendor" not in result.answer
+    assert result.refusal_reason == "answer truncated by the token limit"
+    refused = [
+        event for event in sink.events_for("trace-truncated") if event.event == "synthesis.refused"
+    ]
+    assert len(refused) == 1
+    assert refused[0].payload["reason"] == "answer truncated by the token limit"
+    assert refused[0].payload["finish_reason"] == "length"
+
+
+async def test_normal_finish_reason_answers_normally() -> None:
+    pack_ = pack(chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."))
+    verified_ = verified(claim("PHX-150 cutover is 2026-11-20", "c1"))
+    client = FakeClient("The PHX-150 cutover is 2026-11-20 [1].", finish_reason="stop")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert [citation.chunk_id for citation in result.citations] == ["c1"]
+    assert result.refusal_reason is None
+
+
+def test_output_budget_leaves_room_for_a_six_claim_answer() -> None:
+    """1024 cut off a live six-claim answer; the cap must not regress below that."""
+    assert MAX_OUTPUT_TOKENS >= 2048
+
+
+def test_synthesis_result_round_trips_with_and_without_refusal_reason() -> None:
+    """The additive field is optional: both shapes validate and round-trip."""
+    answered = SynthesisResult(answer="The cutover is 2026-11-27 [1].")
+    assert answered.refusal_reason is None
+    assert SynthesisResult.model_validate(answered.model_dump()).refusal_reason is None
+
+    refused = SynthesisResult(
+        answer="I can't answer that from the evidence I could verify.",
+        refused=True,
+        refusal_reason="answer truncated by the token limit",
+    )
+    reloaded = SynthesisResult.model_validate(refused.model_dump())
+    assert reloaded.refused is True
+    assert reloaded.refusal_reason == "answer truncated by the token limit"
+
+
+# ---------------------------------------------------------------------------
+# Marker-less drafts: deterministic claim matching (ruling #21)
+# ---------------------------------------------------------------------------
+
+
+async def test_markerless_draft_is_cited_to_the_claim_it_restates() -> None:
+    """The live 8B incident: a faithful seven-sentence answer with no markers."""
+    text = "Google sent three security alert emails on 18 Nov 2026 at 08:12:29 +0000."
+    pack_ = pack(chunk("c1", text))
+    verified_ = verified(claim(text, "c1"))
+    sink = InMemoryEventSink()
+    client = FakeClient(text)
+
+    result = await synthesize(
+        "q",
+        verified_,
+        pack_,
+        trace_id="trace-markerless",
+        client=client,
+        sink=sink,
+        settings=_settings(),
+    )
+
+    assert result.refused is False
+    assert result.answer.strip() == f"{text} [1]"
+    assert [citation.chunk_id for citation in result.citations] == ["c1"]
+    assert result.used_claim_ids == [0]
+    completed = [
+        event
+        for event in sink.events_for("trace-markerless")
+        if event.event == "synthesis.completed"
+    ]
+    assert len(completed) == 1
+    assert completed[0].payload["implied_citations"] == 1
+
+
+async def test_markerless_sentence_below_the_overlap_threshold_is_dropped() -> None:
+    pack_ = pack(chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."))
+    verified_ = verified(claim("PHX-150 cutover is 2026-11-20", "c1"))
+    client = FakeClient("The cutover was delayed twice because the vendor slipped again.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "delayed twice" not in result.answer
+    assert result.refusal_reason == "the draft answer could not be tied back to the evidence"
+
+
+async def test_markerless_sentence_with_a_contradicting_date_is_dropped() -> None:
+    """Numeric guard: 2026-12-04 must not be cited to the claim saying 2026-11-20."""
+    pack_ = pack(chunk("c1", "The PHX-150 cutover date is 2026-11-20 per the Jira field."))
+    verified_ = verified(claim("The PHX-150 cutover date is 2026-11-20", "c1"))
+    client = FakeClient("The PHX-150 cutover date is 2026-12-04.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "2026-12-04" not in result.answer
+    assert result.citations == []
+
+
+async def test_compliant_draft_keeps_its_markers_and_reports_no_implied_citations() -> None:
+    pack_ = pack(
+        chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."),
+        chunk("c2", "PHX-131 is blocked waiting on the vendor contract.", source_id="PHX-131"),
+    )
+    verified_ = verified(
+        claim("PHX-150 cutover is 2026-11-20", "c1", claim_id=0),
+        claim("PHX-131 is blocked", "c2", claim_id=1),
+    )
+    sink = InMemoryEventSink()
+    client = FakeClient("The cutover is 2026-11-20 [1]. PHX-131 is blocked [2].")
+
+    result = await synthesize(
+        "q",
+        verified_,
+        pack_,
+        trace_id="trace-compliant",
+        client=client,
+        sink=sink,
+        settings=_settings(),
+    )
+
+    assert result.answer == "The cutover is 2026-11-20 [1]. PHX-131 is blocked [2]."
+    completed = [
+        event
+        for event in sink.events_for("trace-compliant")
+        if event.event == "synthesis.completed"
+    ]
+    assert completed[0].payload["implied_citations"] == 0
+
+
+async def test_each_markerless_sentence_gets_its_own_claim_marker() -> None:
+    pack_ = pack(
+        chunk("c1", "PHX-150 cutover date is 2026-11-20 per the Jira field."),
+        chunk("c2", "PHX-131 is blocked waiting on the vendor contract.", source_id="PHX-131"),
+    )
+    verified_ = verified(
+        claim("PHX-150 cutover date is 2026-11-20", "c1", claim_id=0),
+        claim("PHX-131 is blocked on the vendor contract", "c2", claim_id=1),
+    )
+    client = FakeClient(
+        "PHX-131 is blocked on the vendor contract. The PHX-150 cutover date is 2026-11-20."
+    )
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert "vendor contract. [1]" in result.answer
+    assert "2026-11-20. [2]" in result.answer
+    assert [citation.chunk_id for citation in result.citations] == ["c2", "c1"]
+    assert result.used_claim_ids == [1, 0]
+
+
+async def test_implied_citation_reports_the_claim_id_not_the_marker_position() -> None:
+    """Matching produces a position; ``used_claim_ids`` must still report the id."""
+    pack_ = pack(chunk("c2", "PHX-131 is blocked waiting on the vendor contract."))
+    verified_ = verified(claim("PHX-131 is blocked on the vendor contract", "c2", claim_id=5))
+    client = FakeClient("PHX-131 is blocked on the vendor contract.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is False
+    assert result.used_claim_ids == [5]
+    assert [citation.chunk_id for citation in result.citations] == ["c2"]
+
+
+# ---------------------------------------------------------------------------
+# Matching guards: overlap threshold, numeric, polarity
+# ---------------------------------------------------------------------------
+
+
+async def test_negated_sentence_is_not_cited_to_a_positive_claim() -> None:
+    """Polarity guard: "not delayed" restates the inverse of "delayed"."""
+    pack_ = pack(chunk("c1", "The PHX-150 cutover is delayed."))
+    verified_ = verified(claim("The PHX-150 cutover is delayed", "c1"))
+    client = FakeClient("The PHX-150 cutover is not delayed.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "not delayed" not in result.answer
+    assert result.citations == []
+
+
+async def test_negated_claim_does_not_back_a_positive_sentence() -> None:
+    """The inverse direction: a negated claim must not cite a positive sentence."""
+    pack_ = pack(chunk("c1", "The PHX-150 cutover is not delayed."))
+    verified_ = verified(claim("The PHX-150 cutover is not delayed", "c1"))
+    client = FakeClient("The PHX-150 cutover is delayed.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "cutover is delayed" not in result.answer
+    assert result.citations == []
+
+
+async def test_unsupported_tail_is_rejected_at_the_new_threshold() -> None:
+    """0.667 overlap: a supported head must not carry the vendor agreement along."""
+    pack_ = pack(chunk("c1", "The cutover is 2026-11-20."))
+    verified_ = verified(claim("The cutover is 2026-11-20", "c1"))
+    client = FakeClient("The cutover is 2026-11-20 and the vendor agreed.")
+
+    result = await synthesize("q", verified_, pack_, client=client, settings=_settings())
+
+    assert result.refused is True
+    assert "vendor agreed" not in result.answer
+    assert result.citations == []
+
+
+async def test_live_draft_sentence_scores_above_the_threshold() -> None:
+    """The incident's real paraphrase pair scores 0.733, so it is still recovered."""
+    claim_text = (
+        "You received a security alert email from Google on 18 Nov 2026 at 08:12:29 +0000, "
+        "suggesting the notice was routine"
+    )
+    sentence = (
+        "You received three security alert emails from Google on 18 Nov 2026 at different times."
+    )
+    pack_ = pack(chunk("c1", claim_text))
+    verified_ = verified(claim(claim_text, "c1"))
+    sink = InMemoryEventSink()
+    client = FakeClient(sentence)
+
+    result = await synthesize(
+        "q",
+        verified_,
+        pack_,
+        trace_id="trace-live-overlap",
+        client=client,
+        sink=sink,
+        settings=_settings(),
+    )
+
+    assert result.refused is False
+    assert "different times. [1]" in result.answer
+    assert [citation.chunk_id for citation in result.citations] == ["c1"]
+    completed = [
+        event
+        for event in sink.events_for("trace-live-overlap")
+        if event.event == "synthesis.completed"
+    ]
+    assert completed[0].payload["implied_citations"] == 1
+
+
+async def test_apostrophe_negation_counts_on_either_side() -> None:
+    """``_TOKEN_RE`` splits ``isn't`` into ``isn`` + ``t``; polarity must see it whole."""
+    assert _is_negated("PHX-131 isn't blocked.") is True
+    assert _is_negated("PHX-131 is not blocked.") is True
+    assert _is_negated("PHX-131 is blocked.") is False
+    positive = chunk("c1", "PHX-131 is blocked by the vendor contract.")
+
+    from_positive_claim = await synthesize(
+        "q",
+        verified(claim("PHX-131 is blocked by the vendor contract", "c1")),
+        pack(positive),
+        client=FakeClient("PHX-131 isn't blocked by the vendor contract."),
+        settings=_settings(),
+    )
+    from_negative_claim = await synthesize(
+        "q",
+        verified(claim("PHX-131 isn't blocked by the vendor contract", "c1")),
+        pack(positive),
+        client=FakeClient("PHX-131 is blocked by the vendor contract."),
+        settings=_settings(),
+    )
+
+    # A negated sentence against a positive claim, and the reverse: both refuse.
+    assert from_positive_claim.refused is True
+    assert from_negative_claim.refused is True
 

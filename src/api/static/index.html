@@ -260,10 +260,13 @@
       </div>
 
       <div class="panel">
-        <h2 style="margin-top:0">Jira sync</h2>
+        <h2 style="margin-top:0">Source sync</h2>
         <p class="hint">Runs <span class="mono">connectors.service.sync</span> — the same code path as
-          <span class="mono">scripts/sync_jira.py</span>. Requires <span class="mono">JIRA_*</span> credentials
-          and a database. Needs network access to your Jira tenant.</p>
+          <span class="mono">scripts/sync_jira.py</span> — for whichever source is selected.
+          <em>jira</em> needs <span class="mono">JIRA_*</span> credentials; <em>gmail</em> needs
+          <span class="mono">GMAIL_ADDRESS</span> and <span class="mono">GMAIL_APP_PASSWORD</span> (IMAP);
+          <em>notion</em> answers <span class="mono">501</span>, not implemented yet. Requires a database
+          and network access to the source.</p>
         <div class="toolbar">
           <select id="sync-source"><option>jira</option><option>notion</option><option>gmail</option></select>
           <label class="inline"><input type="checkbox" id="sync-full"> full resync (detects deletions)</label>
@@ -284,6 +287,15 @@
           <label class="inline"><input type="checkbox" id="bf-force"> force re-embed</label>
           <button class="primary" id="bf-run">Run backfill</button>
         </div>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Answer cache</h2>
+        <p class="hint">Calls <span class="mono">POST /admin/cache/invalidate</span>: cached answers
+          are keyed per user, so this drops all of them and bumps the data version so no entry written
+          against an older version can be read again. With <span class="mono">REDIS_URL</span> unset
+          the answer cache is disabled and the call reports that instead of failing.</p>
+        <div class="row"><button class="primary" id="cache-run">Clear cache</button></div>
       </div>
     </div>
 
@@ -910,6 +922,17 @@ $("bf-run").addEventListener("click", (event) => {
         source: $("bf-source").value || null,
         embedder: $("bf-embedder").value,
       }),
+    }));
+    loadOverview();
+  });
+});
+
+$("cache-run").addEventListener("click", (event) => {
+  busy(event.currentTarget, "clearing…", async () => {
+    showAction("cache invalidate", await api("/admin/cache/invalidate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({}),
     }));
     loadOverview();
   });

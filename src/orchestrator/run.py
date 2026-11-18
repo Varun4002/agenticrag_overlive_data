@@ -404,7 +404,8 @@ class Orchestrator:
 
         if result.refused:
             detail = (
-                verified.insufficiency_reason
+                result.refusal_reason
+                or verified.insufficiency_reason
                 or "the draft answer could not be tied back to the evidence"
             )
             return await self._refuse(

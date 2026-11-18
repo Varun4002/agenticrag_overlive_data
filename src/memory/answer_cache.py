@@ -12,7 +12,10 @@ Four properties make this safe to put in front of the pipeline:
   in the value.
 * **Per data version.** ``answer_cache:version`` is a monotonic counter:
   bumping it makes every existing entry unreachable and they then expire on
-  their TTL. Nothing bumps it automatically yet — an ingest/sync caller does.
+  their TTL. Four callers bump it: ``connectors.service.sync`` (after a
+  committed upsert or retire), ``POST /admin/backfill`` (when chunks were
+  written or ``force`` was set), ``POST /admin/seed``, and
+  ``POST /admin/cache/invalidate``.
 * **Optional by construction.** ``REDIS_URL`` unset (or Redis unreachable)
   means "no cache": the pipeline runs exactly as it does without one. Every
   failure here is a cache miss, never a request failure — a cache is a latency

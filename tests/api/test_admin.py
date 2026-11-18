@@ -41,7 +41,13 @@ def _fresh_settings() -> None:
 def test_dashboard_asset_exists() -> None:
     """The single-file UI ships with the package data."""
     assert UI_FILE.is_file(), f"missing dashboard asset: {UI_FILE}"
-    assert "operator dashboard" in UI_FILE.read_text(encoding="utf-8")
+    html = UI_FILE.read_text(encoding="utf-8")
+    assert "operator dashboard" in html
+    # The Actions tab covers every admin mutation, including the answer cache.
+    assert "/admin/cache/invalidate" in html, "the clear-cache button must call the cache route"
+    assert 'id="cache-run"' in html, "no clear-cache button in the dashboard"
+    assert "Jira sync" not in html, "the sync card is source-agnostic, not Jira-only"
+    assert 'id="sync-source"' in html, "the source selector must stay on the sync card"
 
 
 def test_query_box_is_the_landing_page() -> None:

@@ -5,7 +5,15 @@
 > Keys are `sha256(normalized question | user_id | data version)`, the TTL is
 > 900 s, and a version counter is bumped on every sync/backfill/seed write —
 > ruling #14 in `docs/08-decisions.md`, code in `src/memory/answer_cache.py`,
-> state of the component in `src/memory/HANDOFF.md`. The per-source watermark and
+> state of the component in `src/memory/HANDOFF.md`. **Live-verified
+> (2026-11-18)** against the running API: cold question 9.102 s, identical repeat
+> 0.095 s with `memory.cache_hit` in the trace (`intake → plan →
+> memory.cache_hit → completed`, status `cache_hit`); a different `user_id`
+> missed and ran the full pipeline (4.19 s); Redis keys are `answer_cache:` + 64
+> hex chars and no value contains the question text or a person name;
+> `POST /admin/cache/invalidate` returned
+> `{invalidated: true, cleared: 2, version: 1}`. Still unverified: a mid-request
+> Redis outage, concurrent requests, TTL expiry. The per-source watermark and
 > `content_hash` freshness rule described below is **not implemented**: staleness
 > is the version counter plus the TTL. Session scratchpad (Tier 1) and entity
 > registry (Tier 3) are unbuilt, as are the cache stampede lock and the

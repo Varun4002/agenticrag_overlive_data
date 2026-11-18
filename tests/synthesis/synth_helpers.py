@@ -49,8 +49,9 @@ class FakeClient:
 
     provider = "fake"
 
-    def __init__(self, answer: str) -> None:
+    def __init__(self, answer: str, *, finish_reason: str | None = "stop") -> None:
         self._answer = answer
+        self._finish_reason = finish_reason
         self.requests: list[CompletionRequest] = []
         self.closed = False
 
@@ -61,7 +62,7 @@ class FakeClient:
             model="fake",
             usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
             latency_ms=1,
-            finish_reason="stop",
+            finish_reason=self._finish_reason,
         )
 
     async def aclose(self) -> None:

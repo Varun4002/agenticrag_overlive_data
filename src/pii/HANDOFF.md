@@ -56,7 +56,8 @@ and each chunk gains `redacted_types` — all frozen fields, none added here.
    `analyze()` runs Presidio in a worker thread under one process-wide
    `threading.Lock` (spaCy pipelines are not thread-safe).
 4. **Policy filtering.** For each detected span:
-   - unknown entity class → counted (`unknown_entities`), skipped;
+   - unknown entity class → `PiiScrubError` (fail closed): a detected span we
+     cannot map is a mapping bug, and skipping it would be a silent leak;
    - overlaps an existing placeholder → skipped;
    - `PERSON`/`LOCATION`/`ADDRESS` overlapping an allowlisted term →
      suppressed (`allowlisted_spans`);
@@ -78,7 +79,7 @@ and each chunk gains `redacted_types` — all frozen fields, none added here.
    event (agent `pii`) carries: `chunks`, `redactions`, `by_type`,
    `chunks_with_redactions`, `placeholders`, `detected_spans`,
    `allowlisted_spans`, `declined_person_spans`, `declined_location_spans`,
-   `unknown_entities`, `person_registry_size`, `entities_enabled`,
+   `person_registry_size`, `entities_enabled`,
    `audit_persisted`; the event itself carries `latency_ms`.
 
 ### Failure modes
@@ -91,7 +92,7 @@ and each chunk gains `redacted_types` — all frozen fields, none added here.
 | Anonymizer raises, or a span cannot be mapped to its placeholder | `PiiUnavailableError` (fail closed rather than ship unmapped text) |
 | Any other exception mid-scrub | `PiiScrubError`; no pack |
 | `audit.redactions` insert fails | swallowed, `audit_persisted=false`, pack still returned (the `AUDIT_STRICT` refusal lives in `api/routes.py`) |
-| No database configured | `NullRedactionWriter`: rows logged at debug, **returns `True`** (see §5) |
+| No database configured | `NullRedactionWriter`: rows logged at debug, `audit_persisted=false` (truthful — nothing was persisted; see §5) |
 | Empty chunk text | returned unchanged; no analyzer call |
 | Called without `known_person_names` | warning logged once per call; PERSON falls back to shape heuristics |
 
@@ -133,17 +134,17 @@ survive · the corpus keeps `Project Phoenix`, `PHX-150`, `2026-11-20`,
 `Ledger v2`, `EU incident`, `SEV-1` · injection text is not special-cased (the
 scrubber redacts PII only) · an empty pack passes through.
 
-**Not covered by any test** (all present in the code, none exercised here):
+**Coverage note:** the `audit.redactions` write path is now exercised by
+`tests/pii/test_audit.py` (DB-gated on the existing `pii_session_factory` /
+`clean_pii_db` fixtures, refusing any database not named `*_pii_test`): one row
+per redaction with the right type/placeholder, a salted `original_hash`, and no
+original value in any column. Fail-closed behaviour is covered by
+`tests/pii/test_failures.py`.
 
-- The `audit.redactions` write path. `tests/pii/conftest.py` defines
-  `pii_session_factory`/`clean_pii_db` and seeds a document + chunk for FK-valid
-  rows, but no test consumes those fixtures. With no `DATABASE_URL` in this
-  environment every test goes through `NullRedactionWriter`, so the insert path is
-  never exercised. The brief's "audit rows written with salted hash; original
-  value not recoverable" test does not exist.
-- Fail-closed behaviour. Nothing asserts `PiiUnavailableError`/`PiiScrubError`
-  from `scrub()`; the orchestrator suite covers the *downstream* mapping
-  (`guardrail_blocked`, `tests/orchestrator/test_state_machine.py`).
+**Still not covered:**
+
+- Analyzer lock contention under concurrent requests (the lock is untested for
+  contention).
 - Idempotency of a second scrub pass (the seeding logic is implemented).
 
 ---
@@ -198,17 +199,13 @@ scrubber redacts PII only) · an empty pack passes through.
   allowlist must be pointed at a registry-shaped JSON (`PII_ALLOWLIST_PATH`);
   otherwise the default signal is the *fixture corpus manifest*, which knows
   nothing about real project names.
-- **`audit_persisted` is `true` when nothing was persisted.** `NullRedactionWriter`
-  returns `True` ("intentionally dropped", the same convention as
-  `NullEventSink`), so a no-database deployment reports `audit_persisted: true`.
-  `AUDIT_STRICT` in the API layer is what actually refuses unauditable answers.
-- **The redaction audit table is untested.** See §3: the code path, the
-  `_as_uuid` fallback for non-UUID chunk ids, and the "never raises" contract of
-  `DatabaseRedactionWriter` have no test.
-- **`errors.py` overstates `PiiScrubError`.** Its docstring says the anonymizer
-  raising and unknown entity classes produce `PiiScrubError`; in the code an
-  anonymizer failure becomes `PiiUnavailableError` and an unknown entity class is
-  counted and skipped. Behaviour is correct; the docstring is wrong.
+- **`audit_persisted` is truthful now.** `NullRedactionWriter.write()` returns
+  `not records`, so a no-database deployment reports `audit_persisted: false`
+  for rows it only logged. `AUDIT_STRICT` in the API layer is what actually
+  refuses unauditable answers.
+- **`errors.py` matches the code now.** Unmapped entity class ⇒
+  `PiiScrubError` (fail closed); analyzer/anonymizer failure ⇒
+  `PiiUnavailableError`. Both are covered in `tests/pii/test_failures.py`.
 - **`PII_TYPE_BY_LABEL` is lossy against the frozen enum:** `LOCATION` audits as
   `address`, `CREDIT_CARD` and `DOB` audit as `other`. Per-class counts in
   `audit.redactions` therefore do not distinguish those three.

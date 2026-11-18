@@ -15,7 +15,7 @@ Read with: `docs/agents/00-orchestrator.md`, `docs/04-orchestration.md`,
 | File | Contents |
 |---|---|
 | `src/orchestrator/run.py` | `Orchestrator.ask(req) -> AskResponse`: the state machine, stage injection, refusals, budget, audit events. `Stages` (the four callables), `Plan`, `default_stages()`. |
-| `src/orchestrator/pipeline.py` | Lead-owned frozen hand-off shapes (`EvidencePack` → `ScrubbedPack` → `VerifiedClaims` → `SynthesisResult`) — untouched. |
+| `src/orchestrator/pipeline.py` | Lead-owned frozen hand-off shapes (`EvidencePack` → `ScrubbedPack` → `VerifiedClaims` → `SynthesisResult`) — unchanged apart from the additive `SynthesisResult.refusal_reason` (ruling #20). |
 | `src/orchestrator/contracts.py` | Frozen HTTP contract — untouched. |
 | `src/api/routes.py` | `/ask` calls the orchestrator; 503 on misconfiguration; `api.request.failed` on failure; audit-strict semantics unchanged. |
 | `src/config.py` | `orchestrator_top_k` (12), `orchestrator_budget_s` (120). |
@@ -35,7 +35,11 @@ INTAKE → PLAN → RETRIEVE → SCRUB → VERIFY → SYNTHESIZE → RESPOND
 - **Refusal taxonomy**: `insufficient_evidence` (evidence says no),
   `guardrail_blocked` (scrub failed), `out_of_scope` (blank question),
   `error` (LLM/budget). The user-visible detail never contains provider
-  messages, only the error *type* — no stack traces leak.
+  messages, only the error *type* — no stack traces leak. Synthesis refusal
+  reasons are propagated into `refusal.detail` (`SynthesisResult.refusal_reason`
+  first, then `VerifiedClaims.insufficiency_reason`, then the generic string —
+  ruling #20), so a truncated draft reports `"answer truncated by the token
+  limit"` rather than a misleading fallback.
 - **Budget** (`orchestrator_budget_s`, wall clock): checked before each LLM
   step; exhaustion or stage timeout refuses with `degraded=true`. It never
   forces synthesis on unverified claims (ruling #2 in docs/08).
@@ -99,8 +103,9 @@ The golden-set eval must run as an identity the corpus grants:
 - **Memory is Tier-2 only now**: the Redis answer cache is live
   (`src/memory/answer_cache.py`, optional via `REDIS_URL`, per-user keys,
   version invalidation — ruling #14), but the entity registry and session
-  turns are still unwritten, and nothing bumps the cache version from the
-  sync/backfill paths yet (wiring queued).
+  turns are still unwritten. The cache version is bumped by
+  `connectors.service.sync`, `POST /admin/backfill`, `POST /admin/seed` and
+  `POST /admin/cache/invalidate`.
 - **No live fetch**: `Plan.live_fetch` is always false; fetched documents would
   need same-request indexing to be citable.
 - **Synthesis quality is model-bound**: a live run answered a contradiction

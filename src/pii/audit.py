@@ -83,13 +83,24 @@ def _as_uuid(value: str | None) -> uuid.UUID | None:
 
 
 class RedactionWriter(Protocol):
-    """Persists redaction rows; never raises, reports success instead."""
+    """Persists redaction rows; never raises, reports what actually happened.
+
+    ``True`` means the rows are in ``audit.redactions`` (or there were none),
+    ``False`` means they were dropped. The result is what ``pii.scrubbed``
+    reports as ``audit_persisted``, so it must not be optimistic.
+    """
 
     async def write(self, trace_id: str, records: Sequence[RedactionRecord]) -> bool: ...
 
 
 class NullRedactionWriter:
-    """Writer used when no database is configured (dev/tests)."""
+    """Writer used when no database is configured (dev/tests).
+
+    The rows are logged at debug level and dropped, so the write reports
+    ``False``: a trace must not claim redactions were audited when only a log
+    line exists (ruling #18 in ``docs/08-decisions.md``). The pack is still
+    returned — ``AUDIT_STRICT`` is enforced by the API layer, not here.
+    """
 
     async def write(self, trace_id: str, records: Sequence[RedactionRecord]) -> bool:
         logger.debug(
@@ -97,7 +108,8 @@ class NullRedactionWriter:
             len(records),
             trace_id,
         )
-        return True
+        # Nothing to persist is not a failure; rows that needed a home are.
+        return not records
 
 
 class DatabaseRedactionWriter:

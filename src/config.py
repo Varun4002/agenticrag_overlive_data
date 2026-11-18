@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # Fail-closed thresholds for the Evidence Agent (docs/agents/05).
     evidence_sufficiency_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence_min_claim_overlap: float = Field(default=0.4, ge=0.0, le=1.0)
+    # A model trait, not a retrieval knob: the deployed local 8B model has a
+    # 4096-token context, and a 12-chunk pack measured 4370 prompt tokens — more
+    # than it can hold, so it echoes the input instead of answering. This caps
+    # the chunks sent to claim extraction on both the first attempt and the
+    # repair retry (relevance order preserved). A larger-context provider can
+    # raise it.
+    evidence_extraction_max_chunks: int = Field(default=6, ge=1, le=50)
 
     # --- orchestrator --------------------------------------------------
     # Evidence candidates per request; the retriever's own default is 12.

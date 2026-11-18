@@ -21,6 +21,7 @@ from db.tracing import InMemoryEventSink
 from llm.errors import LLMAuthError, LLMTimeoutError
 from memory.answer_cache import NullAnswerCache, cache_key_hash
 from orchestrator.contracts import AskRequest, AskResponse, Citation
+from orchestrator.pipeline import SynthesisResult
 from orchestrator.run import Orchestrator
 from pii.errors import PiiUnavailableError
 from retrieval.errors import RetrievalConfigError
@@ -117,6 +118,30 @@ async def test_synthesis_refusal_becomes_insufficient_evidence() -> None:
     assert response.answer == "I can't answer that."
     assert response.degraded is False
     assert [event.event for event in sink.events_for("t-refuse")][-1] == "orchestrator.refused"
+
+
+async def test_synthesis_refusal_reason_becomes_the_detail() -> None:
+    """The truncation guard's typed reason reaches the user, not a generic string."""
+    fakes = FakeStages(
+        verified=make_verified(can_answer=False, reason="no claim covers the question"),
+        synthesis=SynthesisResult(
+            answer="I can't answer that from the evidence I could verify.",
+            refused=True,
+            refusal_reason="answer truncated by the token limit",
+        ),
+    )
+    sink = InMemoryEventSink()
+    response = await make_orchestrator(fakes, sink).ask(make_request(), trace_id="t-truncated")
+
+    assert response.refusal is not None
+    assert response.refusal.reason == "insufficient_evidence"
+    # The typed synthesis reason wins over the sufficiency fallback.
+    assert response.refusal.detail == "answer truncated by the token limit"
+    assert response.answer == "I can't answer that from the evidence I could verify."
+    assert response.citations == []
+    refused = sink.events_for("t-truncated")[-1]
+    assert refused.event == "orchestrator.refused"
+    assert refused.payload["detail"] == "answer truncated by the token limit"
 
 
 async def test_scrub_failure_refuses_and_never_calls_a_model() -> None:

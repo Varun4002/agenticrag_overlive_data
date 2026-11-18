@@ -1,10 +1,13 @@
 # Memory — Hand-off (component 08)
 
-Status: **Tier 2 only, implemented**. The Redis answer cache is live in the
-request path and its offline tests pass on this machine (2026-11-18). Tier 1
-(session scratchpad) and Tier 3 (entity registry) are **not implemented**, and
-**the Redis path has not been exercised against a live Redis in this round** —
-the five live tests skip without `REDIS_URL`, and no live run is recorded here.
+Status: **Tier 2 only, implemented, and verified against a live Redis**. The
+Redis answer cache is live in the request path; on 2026-11-18 it was measured
+against the running API (§7): a cold question took 9.102 s, the identical repeat
+0.095 s and hit `memory.cache_hit`, a different `user_id` missed and ran the
+full pipeline, and keys are `answer_cache:` + 64 hex chars. The five in-suite
+live tests still skip without `REDIS_URL` — the measurements came from the API,
+not from that suite. Tier 1 (session scratchpad) and Tier 3 (entity registry)
+are **not implemented**.
 
 Read with: `docs/agents/08-memory-agent.md` (brief), `docs/07-memory-design.md`
 (the three-tier spec, now annotated with what exists), `docs/05-data-model.md`
@@ -221,10 +224,11 @@ read/write-only failure behaves the same.
 
 ## 6. Uncertainty / risks
 
-- **No live Redis run in this round.** Everything above about Redis behaviour
-  comes from reading `answer_cache.py` and from tests that skip. The five live
-  tests have not been executed here, so SCAN batching, `clear()` counts, TTLs and
-  `INCR` semantics are reasoned-about, not observed.
+- **Live Redis is verified at the request level, not in-suite.** The numbers in
+  §7 come from the running API (`/ask`, `POST /admin/cache/invalidate`); the five
+  `tests/memory` live tests still skip without `REDIS_URL` and have not been
+  executed here. TTL expiry is the one cache behaviour no run has observed (it
+  needs a 900 s wait).
 - **Mid-request outage is only covered by fakes.** `RedisAnswerCache._warn_once`,
   the 2 s socket timeouts and the "fail open" mapping are exercised with a
   `FakeAnswerCache` that raises; no test kills a real connection mid-request. If
@@ -261,16 +265,12 @@ read/write-only failure behaves the same.
 - **The dashboard's "answer cache" counter is the Postgres table**, not Redis
   (`SELECT count(*) FROM mem.answer_cache`), so it reads 0 even with a populated
   cache.
-- **The module docstring is stale on invalidation.** It says "Nothing bumps it
-  automatically yet — an ingest/sync caller does", while `connectors.service.sync`,
-  `/admin/backfill` and `/admin/seed` all call `invalidate_answer_cache()` today
-  (§1). `.env.example` repeats the same stale sentence. The code is right; the
-  comments were not updated.
-- **Not verified:** live Redis of any version (the module targets `redis>=5.0`),
-  concurrent `/ask` requests sharing one cache, eviction under a `maxmemory`
-  policy, and behaviour across a Redis restart. The version counter is an ordinary
-  key: if it disappears, `version()` falls back to 0, which makes older entries
-  unreachable (they still expire on their TTL) rather than serving them.
+- **Not verified:** concurrent `/ask` requests sharing one cache, eviction under
+  a `maxmemory` policy, TTL expiry, and behaviour across a Redis restart (a live
+  mid-request outage is still only covered by fakes, above). The version counter
+  is an ordinary key: if it disappears, `version()` falls back to 0, which makes
+  older entries unreachable (they still expire on their TTL) rather than serving
+  them.
 
 ---
 
@@ -294,6 +294,24 @@ Repo-wide at the same moment, `REDIS_URL` unset:
 5 live cache tests and the database-backed suites). The count moved while this was
 being written — another agent was adding the four invalidation tests described
 above — so re-run rather than trusting the number.
+
+### Live Redis (measured against the running API, 2026-11-18)
+
+`REDIS_URL` and `DATABASE_URL` set, `uvicorn api.main:app` serving `/ask`:
+
+| Observation | Result |
+|---|---|
+| Cold request (same `user_id`/question) | 9.102 s, answered with a citation |
+| Identical second request | 0.095 s, trace `intake → plan → memory.cache_hit → completed`; the hit event carries `original_trace_id` and `cache_key_hash`, the completion carries `status=cache_hit`, `cached=true` |
+| Same question, different `user_id` | missed, ran the full pipeline (4.19 s) |
+| Keys in Redis | `answer_cache:` + 64 hex chars only |
+| Values in Redis | no stored value contains the full question text or any fixture person name |
+| `POST /admin/cache/invalidate` | `{"invalidated": true, "cleared": 2, "version": 1}` |
+
+This proves the per-user keying, the hit path and the invalidation route against
+a real Redis. It does **not** cover a mid-request outage (§6), concurrency, or
+TTL expiry, and it is not a substitute for the five live tests — run those with
+`REDIS_URL` set.
 
 The `StarletteDeprecationWarning` from `fastapi.testclient` is the one warning
 everywhere in this repo (pre-existing).

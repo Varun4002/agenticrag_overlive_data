@@ -21,7 +21,7 @@ cross-cutting "structured-output steps use a non-reasoning model"),
 | `src/evidence/validator.py` | `validate_claims()`, `ValidationOutcome`, `Contradiction`, `is_injection()`, `lexical_support()`, `tokenise()`, `DEFAULT_MIN_OVERLAP`. |
 | `src/evidence/sufficiency.py` | `question_aspects()`, `score_sufficiency()`, `Aspect`, `SufficiencyResult`, `DEFAULT_THRESHOLD`. |
 | `src/evidence/prompts.py` | `SYSTEM_PROMPT`, `build_system_prompt()`, `build_user_prompt()`, `build_messages()`, `MAX_OUTPUT_TOKENS`, `MAX_CHUNK_CHARS`. |
-| `tests/evidence/` | 36 test items: 35 offline (all pass) + 1 opt-in live call (skipped without `LIVE_LLM`). |
+| `tests/evidence/` | 41 test items: 40 offline (all pass) + 1 opt-in live call (skipped without `LIVE_LLM`). |
 
 ### Contract (as implemented)
 
@@ -46,10 +46,12 @@ The brief's `VerifyRequest` wrapper is not implemented; see §4.1. The returned
 ```
 verify()
  ├─ empty pack ─────────────────────────────► 0 claims, can_answer=False, no LLM call
- ├─ build_messages()  → <untrusted_content chunk_id="…"> blocks
+ ├─ build_messages()  → <untrusted_content chunk_id="…"> blocks for the first
+ │                      min(len(pack), EVIDENCE_EXTRACTION_MAX_CHUNKS) chunks
  ├─ complete(model=LLM_JSON_MODEL, temperature=0.0, max_tokens=2048)
  ├─ parse_extraction() ── fails ───────────► one repair prompt (the error text is
- │                                           appended), one more call, parse again
+ │                                           appended) over the same capped
+ │                                           chunk slice, one more call
  ├─ validate_claims()      citations → injection → lexical support → dedupe →
  │                         contradiction detection → renumbering
  ├─ score_sufficiency()    aspects × claim text + cited-chunk provenance
@@ -85,8 +87,8 @@ verify()
 
 | Event | When | Payload |
 |---|---|---|
-| `evidence.extracted` | always, except a hard parse failure | `claims`, `dropped_dangling`, `dropped_unsupported`, `dropped_injection`, `duplicates_merged`, `contradictions` (subject/attribute/values), `chunks`, `calls`, `sufficiency`, `can_answer`, `usage`; `reason="empty_pack"` short-circuit variant |
-| `evidence.repair_attempted` | first parse failed | `error` (≤500 chars), `question` |
+| `evidence.extracted` | always, except a hard parse failure | `claims`, `dropped_dangling`, `dropped_unsupported`, `dropped_injection`, `duplicates_merged`, `contradictions` (subject/attribute/values), `chunks` (pack size), `chunks_sent` (chunks in the successful extraction call), `calls`, `sufficiency`, `can_answer`, `usage`; `reason="empty_pack"` short-circuit variant (`chunks=0`, `chunks_sent=0`) |
+| `evidence.repair_attempted` | first parse failed | `error` (≤500 chars), `question`, `chunks` (capped count), `chunks_before` (full pack count) |
 | `evidence.parse_failed` | both parses failed | `error`, `calls`, `usage` |
 | `evidence.injection_dropped` | any instruction-shaped claim survived parsing | `count`, up to 3 samples truncated to 120 chars |
 | `evidence.sufficient` / `evidence.insufficient` | after scoring | `sufficiency`, `threshold`, `covered`, `missing` |
@@ -142,12 +144,16 @@ project name satisfied by cited-chunk provenance · scaffolding words are not
 aspects · generic keywords alone cannot sink a question · uncited chunks do not
 count · a missing ticket key still refuses.
 
-`tests/evidence/test_evidence_service.py` (6): valid extraction verified with
+`tests/evidence/test_evidence_service.py` (11): valid extraction verified with
 events emitted and the injected client left open · evidence wrapped as
 untrusted, `temperature=0.0`, `max_tokens ≥ 1024` · malformed output triggers
-exactly one repair and succeeds · double parse failure fails closed and emits
-`evidence.parse_failed` · empty pack makes no LLM call · injection claim dropped
-and audited.
+exactly one repair and succeeds · the first attempt already sends only
+`min(len(pack), EVIDENCE_EXTRACTION_MAX_CHUNKS)` chunks, in pack order ·
+`Settings(evidence_extraction_max_chunks=3)` changes what is sent · the default
+cap is 6 · a pack smaller than the cap is sent in full on both attempts ·
+double parse failure fails closed and emits `evidence.parse_failed` · empty pack
+makes no LLM call · injection claim dropped and audited · live-prose regression
+refuses with two calls.
 
 `tests/evidence/test_live_ollama.py` (1, opt-in): a real document from
 `fixtures/corpus` through the real model — claims are produced and every cited
@@ -188,6 +194,27 @@ and audited.
    `_detect_contradictions` additionally groups by `subject` + `attribute` and
    reports conflicting values in the trace, so an operator can see *why* an
    answer presented two dates.
+8. **Both extraction attempts trim the pack to
+   `EVIDENCE_EXTRACTION_MAX_CHUNKS` (default 6).** Measured on the incident's
+   real Gmail pack against `LLM_JSON_MODEL=dolphin-llama3:8b`, which `ollama ps`
+   reports at `context 4096`:
+
+   | Chunks sent | Result |
+   |---|---|
+   | 12 | invalid JSON / input echoed, `finish_reason=length` |
+   | 10 | JSON without a `claims` key |
+   | 8 | valid JSON, 1 claim |
+   | 6 | valid JSON, 6 claims |
+
+   A 12-chunk pack logged `prompt_tokens: 4370` — larger than the model's whole
+   context, so the first attempt was spending ~4.4k prompt tokens to produce
+   garbage. Send order is the pack's own relevance order. Both the first attempt
+   and the repair retry now send `min(len(pack), cap)` chunks, so no two caps
+   compete; `EVIDENCE_EXTRACTION_MAX_CHUNKS` is documented as a *model trait*
+   (a larger-context provider can raise it) and `evidence.extracted` reports
+   both `chunks` (pack size) and `chunks_sent` (what the model saw), while
+   `evidence.repair_attempted` keeps `chunks`/`chunks_before`. The two-call
+   ceiling is unchanged.
 
 ---
 
@@ -216,10 +243,12 @@ and audited.
 - **One extraction call means the model's recall is the system's recall.** A
   second pass over the same chunks, or per-chunk extraction, would cost latency
   and tokens; the current design trades recall for a fixed two-call ceiling.
-- **Prompt size is unbounded by the code.** `build_user_prompt()` includes every
-  chunk up to 2000 chars; with `orchestrator_top_k=12` that is ~24k characters
-  before the system prompt. Fine for the local model, unmeasured against a
-  provider context limit.
+- **Prompt size is bounded by chunk count, not by provider limits.**
+  `build_user_prompt()` includes each chunk up to 2000 chars, and extraction now
+  sends at most `EVIDENCE_EXTRACTION_MAX_CHUNKS` (6) of them, so the prompt is
+  bounded — but the *token* cost of a 6-chunk pack against a non-Ollama provider
+  is unmeasured. Raising the cap without checking the model's context
+  window reproduces the original failure.
 - **`usage` is only reported when the client exposes a `ledger`.** The real
   `OpenAICompatibleClient` does; test fakes do not, so `usage` is `{}` in the
   unit tests and the orchestration is never cost-asserted.
@@ -236,7 +265,7 @@ and audited.
 
 ```
 $ .venv/bin/python -m pytest tests/evidence -q
-35 passed, 1 skipped, 1 warning in 0.05s
+40 passed, 1 skipped, 1 warning in 0.07s
     # the skip is tests/evidence/test_live_ollama.py:
     #   "live model check: set LIVE_LLM=1 and have Ollama running"
 
@@ -244,6 +273,7 @@ $ set -a; source ~/.config/agentic-rag/dev.env; set +a
 $ LIVE_LLM=1 .venv/bin/python -m pytest tests/evidence/test_live_ollama.py -q
 1 passed, 1 warning in 10.38s
     # real extraction over PHX-150 from fixtures/corpus, local Ollama
+    # (last live run; not re-run after the extraction cap change)
 
 $ .venv/bin/ruff check src/evidence tests/evidence
 All checks passed!

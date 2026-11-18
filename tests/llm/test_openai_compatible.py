@@ -284,4 +284,7 @@ async def test_per_request_model_override_wins() -> None:
         await client.aclose()
 
     assert captured["model"] == "override-model"
+    # ``extra`` is merged flat into the JSON body (not nested), so the provider
+    # sees ``response_format`` exactly as given.
     assert captured["response_format"] == {"type": "json_object"}
+    assert "extra" not in captured

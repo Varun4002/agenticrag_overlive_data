@@ -20,7 +20,7 @@ http://127.0.0.1:8000/admin/*   # the JSON API it calls
 | **Overview** | Documents (current/superseded), chunks and how many are embedded, traces and events, PII redactions, memory tables; per-source counts; `core.sync_state`; runtime config (models, endpoint, thresholds); ACL users found in `documents.acl`; the last 12 audit events. Polls every 15 s. |
 | **Documents** | Filter by source, search title/id/content, include superseded rows. Click a row to read the document text and every chunk (seq, chars, embedding presence, heading path, section, hash). |
 | **Traces** | Recent traces with agent/latency roll-up; click one for the ordered event timeline with payloads. Any trace id can be opened directly. |
-| **Actions** | Seed the fixture corpus, run a connector sync (Jira, or Gmail when `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` are set; Notion answers 501), run a bounded embedding backfill. A completed sync — Jira or Gmail — and any backfill that writes chunks bump the answer-cache version, so repeated questions re-run the pipeline instead of serving stale answers. Results are shown as JSON, with a link into the trace when one was produced. |
+| **Actions** | Seed the fixture corpus, run a connector sync, run a bounded embedding backfill, clear the answer cache. The sync card is source-agnostic: the dropdown selects Jira or Gmail (Gmail when `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` are set; Notion answers 501). A completed sync — Jira or Gmail — and any backfill that writes chunks bump the answer-cache version, so repeated questions re-run the pipeline instead of serving stale answers. The cache-clear button wraps `POST /admin/cache/invalidate`. Results are shown as JSON, with a link into the trace when one was produced. |
 
 ## API
 
@@ -34,7 +34,7 @@ http://127.0.0.1:8000/admin/*   # the JSON API it calls
 | `POST` | `/admin/search` | `{query, user_id, top_k, sources, scrub, known_person_names}` |
 | `POST` | `/admin/sync` | `{source, full}` — same code path as `scripts/sync_jira.py` |
 | `POST` | `/admin/backfill` | `{limit, only_missing, force, source, embedder}` — `embedder="fake"` for offline |
-| `POST` | `/admin/cache/invalidate` | Drops every cached answer and bumps the data version. With `REDIS_URL`: `{invalidated: true, cleared, version}`; without it: `{invalidated: false, reason: "no answer cache configured (REDIS_URL is unset)"}`. A Redis failure is a 502. Needs no database; there is no button for it — call the route. |
+| `POST` | `/admin/cache/invalidate` | Drops every cached answer and bumps the data version. With `REDIS_URL`: `{invalidated: true, cleared, version}`; without it: `{invalidated: false, reason: "no answer cache configured (REDIS_URL is unset)"}`. A Redis failure is a 502. Needs no database; the Actions tab's **Clear cache** button calls it. |
 | `POST` | `/admin/seed` | `{confirm: true}` — upserts `fixtures/corpus` (idempotent, refused in prod) |
 
 Error semantics are deliberate: **400** = fix your configuration (e.g. Jira

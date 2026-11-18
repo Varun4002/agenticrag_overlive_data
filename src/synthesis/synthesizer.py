@@ -2,17 +2,25 @@
 
 Invariants:
 - Nothing but ``VerifiedClaims`` may be restated. Uncited factual sentences are
-  stripped, not repaired.
+  either matched to a verified claim deterministically (with a numeric guard) or
+  stripped. Matching exists because the model can ignore the marker instruction
+  while still writing a faithful answer: a live 8B draft restated seven verified
+  claims and cited none, so stripping turned a good answer into a refusal.
 - Citation markers are renumbered so every ``[n]`` in the delivered answer maps
-  to exactly one entry in the delivered citations.
+  to exactly one entry in the delivered citations (duplicate claims on the same
+  chunk collapse to one citation).
 - Refusal is deterministic (no LLM call) whenever the evidence layer says the
-  question cannot be answered.
+  question cannot be answered, or the model's draft hit the output-token limit.
+- Every refusal also carries its deterministic reason in
+  ``SynthesisResult.refusal_reason``, so the orchestrator can report it verbatim
+  instead of a generic fallback.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 
 from config import Settings, get_settings
 from db.tracing import EventSink, NullEventSink, Tracer
@@ -44,6 +52,57 @@ QUOTE_CHARS = 200
 
 #: Sentences shorter than this are treated as headings/fragments, not claims.
 MIN_FACTUAL_WORDS = 4
+
+#: Share of a marker-less sentence's words that must appear in one verified claim
+#: before that claim is treated as the sentence's support. 0.7 is measured, not
+#: guessed: the live marker-less sentence scores 0.733 against its claim (so the
+#: real incident is still recovered), while "The cutover is 2026-11-20 and the
+#: vendor agreed." against "The cutover is 2026-11-20." scores 0.667 — an
+#: unsupported tail must be rejected instead of riding along on a citation.
+#: High on purpose: a wrong citation is worse than a dropped sentence, which
+#: merely refuses.
+MIN_IMPLIED_CITE_OVERLAP = 0.7
+
+#: Explicit negation words. Matching the sentence against a claim of the opposite
+#: polarity would cite the inverse of what the claim says, so the polarity has to
+#: agree. Semantic negation ("delayed" vs "on time", "up" vs "down") is out of
+#: reach for a lexical check.
+_NEGATION_CUES = frozenset(
+    {
+        "not",
+        "no",
+        "never",
+        "none",
+        "without",
+        "isn't",
+        "aren't",
+        "wasn't",
+        "weren't",
+        "doesn't",
+        "don't",
+        "didn't",
+        "hasn't",
+        "haven't",
+        "hadn't",
+        "won't",
+        "wouldn't",
+        "can't",
+        "cannot",
+        "couldn't",
+        "shouldn't",
+        "nothing",
+        "nobody",
+    }
+)
+
+#: Word pattern that keeps apostrophes, so ``isn't`` stays one token:
+#: ``_TOKEN_RE`` splits it into ``"isn"`` + ``"t"`` and would hide the negation.
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+#: Provider finish reasons that mean "output budget exhausted", i.e. the draft
+#: was cut off mid-sentence. A stop reason we do not recognise is treated as a
+#: normal end (the cleaning pass still has to cite every delivered sentence).
+TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "token_limit"})
 
 
 def refusal_answer(reason: str | None = None) -> str:
@@ -121,14 +180,22 @@ def _dedupe_lines(lines: list[str]) -> tuple[list[str], list[str]]:
     return kept, duplicates
 
 
-def _clean_answer(raw: str, claim_count: int) -> tuple[str, list[int], list[str]]:
-    """Drop uncited factual sentences; return (answer, cited claim numbers, dropped)."""
+def _clean_answer(
+    raw: str, claims: Sequence[Claim]
+) -> tuple[str, list[int], list[str], int]:
+    """Clean the draft; return (answer, used markers, dropped, implied markers).
+
+    A factual sentence the model left unmarked is cited to the claim it restates
+    when ``_implied_marker`` finds one; ``implied`` counts how often that
+    happened, so an operator can see the model ignored the marker instruction.
+    """
     used: list[int] = []
+    implied = 0
     kept_lines: list[str] = []
     dropped: list[str] = []
 
     for raw_line in raw.splitlines():
-        line = _strip_invalid_markers(raw_line.strip(), claim_count)
+        line = _strip_invalid_markers(raw_line.strip(), len(claims))
         if not line:
             continue
         if _is_decorative_line(line):
@@ -143,7 +210,15 @@ def _clean_answer(raw: str, claim_count: int) -> tuple[str, list[int], list[str]
                     if marker not in used:
                         used.append(marker)
             elif _is_factual(sentence):
-                dropped.append(sentence)
+                # A model-written marker always wins; this only fills a gap.
+                implied_marker = _implied_marker(sentence, claims)
+                if implied_marker is None:
+                    dropped.append(sentence)
+                else:
+                    kept.append(f"{sentence} [{implied_marker}]")
+                    implied += 1
+                    if implied_marker not in used:
+                        used.append(implied_marker)
             else:
                 kept.append(sentence)
         if kept:
@@ -157,19 +232,17 @@ def _clean_answer(raw: str, claim_count: int) -> tuple[str, list[int], list[str]
         # Nothing but citation markers: there is no answer to show.
         if answer:
             dropped.append(answer)
-        return "", [], dropped
+        return "", [], dropped, implied
     # A dropped duplicate must not leave its claim behind in the citation list.
     cited = {int(match) for match in _CITATION_RE.findall(answer)}
     used = [marker for marker in used if marker in cited]
-    return answer, used, dropped
+    return answer, used, dropped, implied
 
 
-def _renumber(answer: str, used: list[int]) -> str:
-    """Map cited claim numbers onto 1..k in order of first use."""
-    mapping = {old: new for new, old in enumerate(used, start=1)}
-
+def _renumber(answer: str, numbers: dict[int, int]) -> str:
+    """Map markers onto the delivered citation numbers; drop markers without one."""
     def replace(match: re.Match[str]) -> str:
-        new = mapping.get(int(match.group(1)))
+        new = numbers.get(int(match.group(1)))
         return f"[{new}]" if new is not None else ""
 
     return _CITATION_RE.sub(replace, answer)
@@ -208,26 +281,101 @@ def _best_supporting_chunk(claim: Claim, by_id: dict[str, ScrubbedChunk]) -> Scr
     return best
 
 
-def _citations_for(used: list[int], claims: list[Claim], by_id: dict[str, ScrubbedChunk]) -> list[
-    Citation
-]:
+def _claim_markers(claims: Sequence[Claim]) -> dict[int, Claim]:
+    """Citation marker -> claim, for the numbering the model was shown.
+
+    ``prompts.build_user_prompt`` numbers the claims ``[1]..[n]`` in list order,
+    so a marker is a *position* and not a ``claim_id``. Resolving through this
+    map (instead of ``claims[marker - 1]``) keeps a non-contiguous ``claim_id``
+    from being read as an index; the delivered ``used_claim_ids`` come from
+    ``Claim.claim_id``, never from arithmetic on the marker.
+    """
+    return {index: claim for index, claim in enumerate(claims, start=1)}
+
+
+def _is_negated(text: str) -> bool:
+    """True when ``text`` states an explicit negation ("not", "isn't", "never").
+
+    Catches explicit cues only: a claim saying "delayed" against a sentence
+    saying "on time" is semantically negated and reads as positive here.
+    """
+    words = _WORD_RE.findall(text.lower().replace("\u2019", "'"))
+    return any(word in _NEGATION_CUES or word.endswith("n't") for word in words)
+
+
+def _implied_marker(sentence: str, claims: Sequence[Claim]) -> int | None:
+    """Marker position of the verified claim a marker-less sentence restates.
+
+    The best claim is the one holding the largest share of the sentence's words
+    (``overlap / sentence words``), and only counts when that share is at least
+    ``MIN_IMPLIED_CITE_OVERLAP``. Two guards then check what overlap cannot see.
+    Numeric: the sentence carries a number the claim does not state, so
+    ``2026-12-04`` against ``2026-11-20`` is a contradiction, not a paraphrase.
+    Polarity: an explicit negation on one side but not the other makes the
+    sentence say the inverse of its claim. Ties keep claim order (strict ``>``).
+    """
+    sentence_tokens = _token_set(sentence)
+    if not sentence_tokens:
+        return None
+    best_marker: int | None = None
+    best_claim: Claim | None = None
+    best_overlap = 0.0
+    for marker, claim in _claim_markers(claims).items():
+        overlap = len(sentence_tokens & _token_set(claim.text)) / len(sentence_tokens)
+        if overlap > best_overlap:
+            best_marker, best_claim, best_overlap = marker, claim, overlap
+    if best_marker is None or best_claim is None or best_overlap < MIN_IMPLIED_CITE_OVERLAP:
+        return None
+    numbers = {token for token in sentence_tokens if any(char.isdigit() for char in token)}
+    if not numbers <= _token_set(best_claim.text):
+        return None
+    if _is_negated(sentence) != _is_negated(best_claim.text):
+        return None
+    return best_marker
+
+
+def _citations_for(
+    used: Sequence[int], markers: dict[int, Claim], by_id: dict[str, ScrubbedChunk]
+) -> tuple[list[Citation], dict[int, int]]:
+    """Delivered citations, plus marker -> 1-based citation number.
+
+    Citations are deduplicated by chunk id, preserving first-use order: two
+    claims resting on the same chunk are one delivered citation, and every
+    marker pointing at that chunk is renumbered onto that single entry. A marker
+    whose claim has no chunk in the pack gets no entry at all, so ``_renumber``
+    removes it rather than leaving a dangling reference.
+    """
     citations: list[Citation] = []
-    for old in used:
-        claim = claims[old - 1]
+    numbers: dict[int, int] = {}
+    by_chunk: dict[str, int] = {}
+    for marker in used:
+        claim = markers.get(marker)
+        if claim is None:
+            continue
         chunk = _best_supporting_chunk(claim, by_id)
         if chunk is None:
             continue
-        citations.append(
-            Citation(
-                chunk_id=chunk.chunk_id,
-                document_id=chunk.document_id,
-                source=chunk.source,
-                title=chunk.title,
-                quote=chunk.text[:QUOTE_CHARS],
-                url=chunk.url,
+        number = by_chunk.get(chunk.chunk_id)
+        if number is None:
+            citations.append(
+                Citation(
+                    chunk_id=chunk.chunk_id,
+                    document_id=chunk.document_id,
+                    source=chunk.source,
+                    title=chunk.title,
+                    quote=chunk.text[:QUOTE_CHARS],
+                    url=chunk.url,
+                )
             )
-        )
-    return citations
+            number = len(citations)
+            by_chunk[chunk.chunk_id] = number
+        numbers[marker] = number
+    return citations, numbers
+
+
+def _truncated(finish_reason: str | None) -> bool:
+    """True when the provider stopped at the output-token limit, not at an end."""
+    return (finish_reason or "").strip().lower() in TRUNCATED_FINISH_REASONS
 
 
 def _default_client(settings: Settings) -> OpenAICompatibleClient:
@@ -261,15 +409,26 @@ async def synthesize(
     tracer = Tracer(sink or NullEventSink(), trace_id)
     asked = question.strip() or verified.question
 
-    def refuse(reason: str | None) -> SynthesisResult:
+    def refuse(detail: str | None, *, refusal_reason: str | None = None) -> SynthesisResult:
+        """Refusal with user-visible text ``detail`` and the typed ``refusal_reason``.
+
+        ``refusal_reason`` defaults to ``detail``; the truncation and cleanup
+        paths override it where the user-facing sentence is not the reason a
+        trace reports (``"The draft was cut off..."`` vs ``"answer truncated by
+        the token limit"``).
+        """
         return SynthesisResult(
-            answer=refusal_answer(reason), citations=[], used_claim_ids=[], refused=True
+            answer=refusal_answer(detail),
+            citations=[],
+            used_claim_ids=[],
+            refused=True,
+            refusal_reason=refusal_reason if refusal_reason is not None else detail,
         )
 
     if not verified.can_answer or not verified.claims:
         reason = verified.insufficiency_reason or "no verified claims were available"
         await tracer.emit(AGENT, "synthesis.refused", {"reason": reason[:500], "question": asked})
-        return refuse(reason)
+        return refuse(reason, refusal_reason=f"insufficient evidence: {reason}")
 
     by_id = {chunk.chunk_id: chunk for chunk in pack.chunks}
     # Synthesis is prose, but a reasoning model still wastes the budget thinking.
@@ -290,8 +449,26 @@ async def synthesize(
         if owns_client:
             await llm.aclose()
 
-    cleaned, used, dropped = _clean_answer(response.text, len(verified.claims))
-    citations = _citations_for(used, verified.claims, by_id)
+    if _truncated(response.finish_reason):
+        # A cut-off answer can drop its citation or negate the claim it was
+        # making, and groundedness cannot detect truncation (ruling #17).
+        await tracer.emit(
+            AGENT,
+            "synthesis.refused",
+            {
+                "reason": "answer truncated by the token limit",
+                "finish_reason": response.finish_reason,
+                "question": asked,
+            },
+        )
+        return refuse(
+            "The draft was cut off by the output-token limit.",
+            refusal_reason="answer truncated by the token limit",
+        )
+
+    markers = _claim_markers(verified.claims)
+    cleaned, used, dropped, implied = _clean_answer(response.text, verified.claims)
+    citations, numbers = _citations_for(used, markers, by_id)
     if not cleaned or not used or not citations:
         await tracer.emit(
             AGENT,
@@ -302,9 +479,12 @@ async def synthesize(
                 "question": asked,
             },
         )
-        return refuse("The model's draft could not be tied back to the evidence.")
+        return refuse(
+            "The model's draft could not be tied back to the evidence.",
+            refusal_reason="the draft answer could not be tied back to the evidence",
+        )
 
-    answer = _renumber(cleaned, used)
+    answer = _renumber(cleaned, numbers)
     await tracer.emit(
         AGENT,
         "synthesis.completed",
@@ -312,12 +492,17 @@ async def synthesize(
             "answer_chars": len(answer),
             "citations": len(citations),
             "dropped_sentences": len(dropped),
+            # Markers attached by matching, not written by the model: non-zero
+            # means the draft ignored the citation instruction.
+            "implied_citations": implied,
             "claims_available": len(verified.claims),
         },
     )
     return SynthesisResult(
         answer=answer,
         citations=citations,
-        used_claim_ids=[claim - 1 for claim in used],
+        # A claim that shares its chunk with an earlier one still appears here:
+        # it supported the answer even though its citation was deduplicated.
+        used_claim_ids=[markers[marker].claim_id for marker in used if marker in numbers],
         refused=False,
     )

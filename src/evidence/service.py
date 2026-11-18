@@ -58,6 +58,10 @@ async def _extract(client: LLMClient, messages: list[Message], model: str) -> st
             temperature=0.0,
             # Reasoning models spend tokens thinking before answering.
             max_tokens=MAX_OUTPUT_TOKENS,
+            # The local 8B JSON model ignores the "JSON only" instruction once a
+            # pack gets long and messy, answering in prose instead. Only the
+            # provider-level constraint reliably forces a JSON object.
+            extra={"response_format": {"type": "json_object"}},
         )
     )
     return response.text
@@ -115,7 +119,7 @@ async def verify(
         client: injected LLM client (tests); a real one is built and closed when
             omitted.
         sink: audit sink; defaults to a no-op sink so this needs no database.
-        settings: config override (thresholds, model, endpoint).
+        settings: config override (thresholds, model, endpoint, chunk cap).
     """
     config = settings or get_settings()
     model = config.llm_json_model or config.llm_model
@@ -128,7 +132,13 @@ async def verify(
         await tracer.emit(
             AGENT,
             "evidence.extracted",
-            {"claims": 0, "chunks": 0, "reason": "empty_pack", "question": asked},
+            {
+                "claims": 0,
+                "chunks": 0,
+                "chunks_sent": 0,
+                "reason": "empty_pack",
+                "question": asked,
+            },
         )
         await tracer.emit(
             AGENT,
@@ -146,20 +156,28 @@ async def verify(
     llm: LLMClient = client or _default_client(config)
     calls = 0
     extraction: ExtractionResult | None = None
+    # The model, not the retriever, sets the pack size: a long pack makes the
+    # local 8B JSON model echo the input instead of answering. Packs are
+    # relevance-ordered, so the slice keeps the best evidence for both attempts.
+    sent_chunks = pack.chunks[: config.evidence_extraction_max_chunks]
     try:
-        raw = await _extract(llm, build_messages(asked, pack.chunks), model)
+        raw = await _extract(llm, build_messages(asked, sent_chunks), model)
         calls += 1
         try:
             extraction = parse_extraction(raw)
         except EvidenceParseError as exc:
+            # The retry re-sends the same capped, ranked slice with the error text.
             await tracer.emit(
                 AGENT,
                 "evidence.repair_attempted",
-                {"error": str(exc)[:500], "question": asked},
+                {
+                    "error": str(exc)[:500],
+                    "question": asked,
+                    "chunks": len(sent_chunks),
+                    "chunks_before": len(pack.chunks),
+                },
             )
-            repair_messages = build_messages(
-                asked, pack.chunks, repair=True, error=str(exc)
-            )
+            repair_messages = build_messages(asked, sent_chunks, repair=True, error=str(exc))
             raw = await _extract(llm, repair_messages, model)
             calls += 1
             extraction = parse_extraction(raw)
@@ -203,6 +221,7 @@ async def verify(
                 for c in outcome.contradictions
             ],
             "chunks": len(pack.chunks),
+            "chunks_sent": len(sent_chunks),
             "calls": calls,
             "sufficiency": suff.score,
             "can_answer": suff.can_answer,

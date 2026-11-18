@@ -13,9 +13,11 @@ from orchestrator.pipeline import Claim
 
 __all__ = ["SYSTEM_PROMPT", "build_messages", "build_user_prompt"]
 
-#: Answer budget. The synthesizer is instructed to be concise; a long budget
-#: only invites padding.
-MAX_OUTPUT_TOKENS = 1024
+#: Answer budget. 1024 cut off real six-claim answers from the local 8B model
+#: (``finish_reason="length"``, refused after ~80 s), so the cap is 2048. Extra
+#: room cannot turn into uncited content: ``_clean_answer`` still drops every
+#: sentence that carries no citation.
+MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """You write a short answer using ONLY the verified claims provided.
 
@@ -32,6 +34,10 @@ Rules:
   one side silently.
 - An answer like "I could not find evidence" is handled elsewhere; never invent
   a refusal, and never ask a question back.
+- Be brief: at most 4 sentences in total. If you use a list, enumerate at most
+  5 items and summarise the rest instead of listing every claim.
+- Cite with the marker immediately after the sentence it supports, and never
+  append a "Citations:" or "References:" list.
 - Plain prose or a short markdown list. No headings, no preamble."""
 
 

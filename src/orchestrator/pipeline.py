@@ -14,6 +14,10 @@ Flow::
 
 Rule that makes the chain safe: **no LLM sees an ``EvidenceChunk``.** The
 scrubber is the only path from retrieval to evidence verification.
+
+Freeze-comment amendments (Lead-approved, ruling #20 in ``docs/08-decisions.md``):
+``SynthesisResult.refusal_reason`` was added as an additive field with a default,
+so every existing construction stays valid.
 """
 
 from __future__ import annotations
@@ -112,3 +116,8 @@ class SynthesisResult(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     used_claim_ids: list[int] = Field(default_factory=list)
     refused: bool = False
+    # The deterministic reason when ``refused`` is true ("answer truncated by the
+    # token limit", "the draft answer could not be tied back to the evidence",
+    # "insufficient evidence: ..."), so the orchestrator can report an honest
+    # typed refusal instead of a generic fallback.
+    refusal_reason: str | None = None

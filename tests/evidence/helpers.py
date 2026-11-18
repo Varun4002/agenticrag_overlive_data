@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from llm.base import CompletionRequest, CompletionResponse, Usage
+from llm.base import CompletionRequest, CompletionResponse, Message, Usage
 from orchestrator.pipeline import ScrubbedChunk, ScrubbedPack
 
 FIXED_TIME = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+_CHUNK_ID_RE = re.compile(r'chunk_id="([^"]+)"')
 
 
 def make_chunk(
@@ -40,6 +43,11 @@ def make_pack(question: str, *chunks: ScrubbedChunk) -> ScrubbedPack:
 def claims_json(*claims: dict[str, object]) -> str:
     """Serialize a model-style ``{"claims": [...]}`` payload."""
     return json.dumps({"claims": list(claims)})
+
+
+def prompt_chunk_ids(messages: Sequence[Message]) -> list[str]:
+    """Chunk ids in prompt order, read back from the ``<untrusted_content>`` tags."""
+    return _CHUNK_ID_RE.findall("\n".join(message.content for message in messages))
 
 
 class FakeClient:

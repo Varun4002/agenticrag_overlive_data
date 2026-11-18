@@ -12,6 +12,8 @@ dist/
 # Secrets / local config — never commit these
 .env
 .env.*
+dev.env
+*.env
 !.env.example
 
 # Local artifacts

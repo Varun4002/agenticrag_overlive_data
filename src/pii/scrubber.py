@@ -18,9 +18,10 @@ Behavior, per ``docs/agents/04-pii-scrubber-agent.md`` and the PII policy in
 4. Every redaction is audited (``pii.audit``) and one ``pii.scrubbed`` event is
    emitted with counts by type. No original values leave this module.
 5. Fail closed: a missing/broken analyzer raises
-   :class:`~pii.errors.PiiUnavailableError`; any other internal failure raises
-   :class:`~pii.errors.PiiScrubError`. A partially scrubbed pack is never
-   returned.
+   :class:`~pii.errors.PiiUnavailableError`; an entity class we cannot map to a
+   placeholder is never skipped (a detected span left in place is a potential
+   leak), and it raises :class:`~pii.errors.PiiScrubError` like any other
+   internal failure. A partially scrubbed pack is never returned.
 6. Idempotent: existing ``[LABEL_n]`` placeholders are masked before analysis
    and seed the numbering, so a second pass changes nothing.
 """
@@ -85,7 +86,6 @@ class _Stats:
     allowlisted_spans: int = 0
     declined_person_spans: int = 0
     declined_location_spans: int = 0
-    unknown_entities: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +138,10 @@ async def scrub(
             codenames) on top of the configured allowlist.
 
     Raises:
-        PiiUnavailableError: the analyzer/model is unavailable.
-        PiiScrubError: scrubbing failed part-way; no pack is returned.
+        PiiUnavailableError: the analyzer/model is unavailable, or the
+            anonymizer could not replace a span.
+        PiiScrubError: scrubbing failed part-way (including an entity class with
+            no placeholder label); no pack is returned.
     """
     started = time.perf_counter()
     try:
@@ -225,8 +227,13 @@ async def _scrub_field(text: str, chunk: EvidenceChunk, context: _ScrubContext) 
             continue  # already a placeholder: never re-redact
         label = LABEL_BY_ENTITY.get(span.entity_type)
         if label is None:
-            context.stats.unknown_entities += 1
-            continue
+            # Ruling #15 (docs/08-decisions.md): skipping a detected span is a
+            # silent leak, and an unmapped class means our mapping drifted from
+            # the analyzer. No span text in the message.
+            raise PiiScrubError(
+                f"PII entity class {span.entity_type!r} has no placeholder label; "
+                "refusing to return a pack with an unredactable span"
+            )
         if (
             span.entity_type in NAME_LIKE_ENTITIES
             and allow_ranges
@@ -357,7 +364,6 @@ async def _finish(
         "allowlisted_spans": context.stats.allowlisted_spans,
         "declined_person_spans": context.stats.declined_person_spans,
         "declined_location_spans": context.stats.declined_location_spans,
-        "unknown_entities": context.stats.unknown_entities,
         "person_registry_size": len(context.persons),
         "entities_enabled": list(context.entities),
         "audit_persisted": persisted,
